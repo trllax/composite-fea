@@ -1,0 +1,30 @@
+# Sweep and solve output — regenerable, often large
+results/
+
+# CalculiX scratch. Deliberately does NOT cover *.inp or *.dat: those are the
+# hand-written decks and pinned reaction outputs under cases/, and a stray
+# ignore rule there would silently delete a regression case from the repo.
+scratch/
+*.frd
+*.sta
+*.cvg
+*.12d
+*.equ
+*.rout
+*.rin
+*.rfn
+spooles.out
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store

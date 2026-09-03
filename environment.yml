@@ -1,0 +1,22 @@
+# mamba env create -f environment.yml && mamba activate composite-fea
+# Then: pip install -e . --no-deps
+#
+# calculix provides the `ccx` binary; conda-forge 2.23 has an osx-arm64 build,
+# so the solver and the Python stack come from the same environment.
+name: composite-fea
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - calculix=2.23
+  # The importable gmsh bindings are in python-gmsh (noarch); the `gmsh`
+  # package alone is the CLI/library and does not give you `import gmsh`.
+  - python-gmsh=4.15.*
+  - numpy>=1.26
+  - pandas>=2.2
+  - pyarrow>=16
+  - matplotlib-base>=3.8
+  - seaborn>=0.13
+  - pytest>=8
+  - ruff>=0.6
+  - pip
