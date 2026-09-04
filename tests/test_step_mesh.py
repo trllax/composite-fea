@@ -30,6 +30,10 @@ def test_mesh_step_imprints_and_tags_nested_coverage():
     assert set(mesh.nsets) >= {"fixed_end", "far_face"}
     assert len(mesh.nsets["fixed_end"]) >= 2
     assert len(mesh.nsets["far_face"]) >= 2
+    # Default clamp is every node under HEAL, not just the xmin edge.
+    heal_nodes = {n for eid in mesh.elsets["HEAL"] for n in mesh.elements[eid]}
+    assert set(mesh.nsets["fixed_end"]) == heal_nodes
+    assert len(mesh.nsets["fixed_end"]) > len(mesh.nsets["far_face"])
 
     full = set(mesh.elsets["FULL"])
     assert full == set(mesh.elsets["blade"])

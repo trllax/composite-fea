@@ -98,6 +98,7 @@ def mesh_step(
     *,
     size_mm: float = 40.0,
     coverage_tol_mm: float = 2.0,
+    clamp_coverage: str | None = "HEAL",
     heading: str = "",
 ) -> Mesh:
     """Import a STEP of nested coverage shells -> S8R ``Mesh``.
@@ -106,8 +107,10 @@ def mesh_step(
     tiles so ply drops get mesh edges. Coverage ELSETs are ACP-style masks:
     an element may belong to several (e.g. FULL and HALF and HEAL).
 
-    Root = nodes on the minimum-x boundary; tip = maximum-x boundary (fin
-    span along +x in the current Onshape export).
+    Tip drive set (``far_face``) is the maximum-x boundary edge (fin span
+    along +x). Clamp set (``fixed_end``) defaults to every node under the
+    ``HEAL`` coverage mask; pass ``clamp_coverage=None`` to fall back to the
+    minimum-x edge only.
     """
     step_path = Path(step_path)
     if not step_path.is_file():
@@ -197,28 +200,6 @@ def mesh_step(
                 elem_coverage[next_eid] = set(names)
                 next_eid += 1
 
-        # Root / tip: boundary nodes at global xmin / xmax.
-        xs = [p[0] for p in nodes.values()]
-        xmin, xmax = min(xs), max(xs)
-        tip_tol = max(1e-6, 1e-4 * (xmax - xmin))
-
-        def on_plane(x: float, target: float) -> bool:
-            return abs(x - target) <= tip_tol
-
-        # Prefer nodes that also sit on the exterior: any node on the min/max
-        # x plane. Mid-side nodes included.
-        root_nodes = tuple(
-            sorted(nid for nid, (x, _, _) in nodes.items() if on_plane(x, xmin))
-        )
-        tip_nodes = tuple(
-            sorted(nid for nid, (x, _, _) in nodes.items() if on_plane(x, xmax))
-        )
-        if not root_nodes or not tip_nodes:
-            raise GeometryError(
-                f"could not build root/tip NSETs from x-extrema "
-                f"(xmin={xmin:g}, xmax={xmax:g})"
-            )
-
         elsets: dict[str, tuple[int, ...]] = {
             "blade": tuple(sorted(elements)),
         }
@@ -237,10 +218,47 @@ def mesh_step(
                 f"{ {k: (round(v[0],3), round(v[1],3)) for k,v in ranges.items()} }"
             )
 
+        # Tip = free tip edge at xmax. Clamp = all nodes under clamp_coverage
+        # (default HEAL), else the xmin edge.
+        xs = [p[0] for p in nodes.values()]
+        xmin, xmax = min(xs), max(xs)
+        tip_tol = max(1e-6, 1e-4 * (xmax - xmin))
+
+        def on_plane(x: float, target: float) -> bool:
+            return abs(x - target) <= tip_tol
+
+        tip_nodes = tuple(
+            sorted(nid for nid, (x, _, _) in nodes.items() if on_plane(x, xmax))
+        )
+        if not tip_nodes:
+            raise GeometryError(
+                f"no tip-edge nodes at xmax={xmax:g}"
+            )
+
+        clamp_name = None
+        if clamp_coverage is not None:
+            clamp_name = _sanitize_elset(clamp_coverage)
+            if clamp_name not in elsets:
+                raise GeometryError(
+                    f"clamp_coverage {clamp_coverage!r} -> {clamp_name!r} "
+                    f"not in mesh elsets {sorted(elsets)}"
+                )
+            clamp_nodes: set[int] = set()
+            for eid in elsets[clamp_name]:
+                clamp_nodes.update(elements[eid])
+            root_nodes = tuple(sorted(clamp_nodes))
+        else:
+            root_nodes = tuple(
+                sorted(nid for nid, (x, _, _) in nodes.items() if on_plane(x, xmin))
+            )
+        if not root_nodes:
+            raise GeometryError("clamp NSET (fixed_end) is empty")
+
         default_heading = (
             f"STEP import {step_path.name}: {len(elements)} S8R, "
             f"coverages {sorted(coverages.values())}; "
-            "nested ACP masks via OCC fragment imprint"
+            f"clamp={'mask '+clamp_name if clamp_name else 'xmin edge'}, "
+            "tip=xmax edge; nested ACP masks via OCC fragment imprint"
         )
         mesh = Mesh(
             nodes=nodes,
