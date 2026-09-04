@@ -284,11 +284,9 @@ def _detach_and_exit(argv: list[str], run_root: Path) -> int:
     log_path = run_root / "sweep.log"
     worker_argv = [sys.executable, "-m", "compfea.sweep", "--sync", *argv]
     env = {**os.environ, "COMPFEA_SWEEP_WORKER": "1"}
-    # Prefer setsid; fall back to nohup alone on platforms without it.
-    if hasattr(os, "setsid"):
-        cmd = ["setsid", "nohup", *worker_argv]
-    else:
-        cmd = ["nohup", *worker_argv]
+    # Linux has setsid(1); macOS does not. Popen(start_new_session=True)
+    # already starts a new process group on both, so nohup alone is enough.
+    cmd = ["nohup", *worker_argv]
     write_status(run_root, state="starting", run_id=run_root.name, pid=None)
     with log_path.open("a") as log:
         log.write(f"detach: {' '.join(cmd)}\n")
