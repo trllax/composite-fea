@@ -28,3 +28,7 @@ dist/
 
 # macOS
 .DS_Store
+
+# Case solve directories (regenerable)
+cases/*/runs/
+cases/*/runs_uz/
