@@ -127,6 +127,15 @@ it 0.05%. Keep more than one element across the width if you refine further.
 Reference values above use the placeholder CFRP, not the real material:
 CLPT gives EI = 1.9995e5 N.mm^2 and M_exact(89 deg) = 3105.9 N.mm.
 
+**That EI is the wide-plate reduction `D11 * b`, and this strip has free edges.**
+The right one is `b (D11 - D12^2/D22)` = 1.99456e5, 0.247% lower. Note the error
+column above converges to -0.25% and stays there under refinement: that is the
+reduction, not a mesh error and not a solver offset. Recomputed against the free-
+edge value these runs are within about 0.02%. The numbers in the table are still
+what ccx produced -- only the reference they are compared against is wrong. See
+`cases/smoke_cantilever/README.md`, which measures both reductions across five
+meshes. Redo this comparison before pinning anything against ANSYS.
+
 ## Geometry
 
 Proposed, and yours to change -- the only hard requirement is that both codes

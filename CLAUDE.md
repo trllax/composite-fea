@@ -45,7 +45,7 @@ src/compfea/
   post.py         pandas/seaborn -> SVG
 templates/base.inp
 cases/
-  smoke_cantilever/    8 elements, <5 s, closed-form large-deflection answer
+  smoke_cantilever/    32 elements, ~1 s, hand CLPT + closed-form elastica
   fin_20n/             freediving fin, pinned to a physical measurement
 results/               gitignored
 tests/
@@ -59,12 +59,21 @@ tests/
 - Laminates are zone-based: each `ELSET` gets its own
   `*SHELL SECTION, COMPOSITE`. There is no ply-based draping. Ply drops are
   approximated by giving inboard zones longer stacks than outboard zones.
-- Fiber reference direction is set with `*ORIENTATION`, +x along the part's
-  long axis.
+- Fiber reference direction is set with `*ORIENTATION`. A 0-degree ply runs
+  along the part's long axis, and **which global axis that is belongs to the
+  case, not to this file** -- `cases/cantilever_ansys` and everything derived
+  from it use +y. `layup.py` takes `long_axis` with no default for that reason;
+  a default is silently wrong for half the repo. State it in the case README.
+  Positive angle is counter-clockwise about +z, the standard convention. Writing
+  the mirrored form instead agrees at 0, +/-45 and 90 degrees -- so a cross-ply
+  or a balanced +/-45 stack cannot detect it -- and flips the sign of bend-twist
+  coupling on anything unbalanced.
 - Ply angles are `*ORIENTATION` names, not degrees. ccx reads field 4 of a
   composite ply line as the name of an `*ORIENTATION` card, so a layup emits
   one card per distinct angle, each rotated about the shell normal. Writing
-  the angle there fails with "nonexistent orientation".
+  the angle there fails with "nonexistent orientation". Two distinct angles must
+  never round onto one name: ccx does not reject duplicate NAMEs, it keeps one,
+  and both plies end up at an angle nobody asked for.
 
   ```
   *ORIENTATION, NAME=ori_p45, SYSTEM=RECTANGULAR
@@ -75,9 +84,17 @@ tests/
 - Material is `*ELASTIC, TYPE=ENGINEERING CONSTANTS` (9 constants).
 - ccx has no trailing comments. `**` must start its own line; put it after data
   on a card and the card fails to parse.
-- ccx's S8R composite shell is systematically ~0.25% softer than hand CLPT,
-  measured in the linear range, so it is a formulation offset and not a
-  convergence error. Anything pinned tighter than ~0.5% sits inside it.
+- The "ccx's S8R composite shell is ~0.25% softer than hand CLPT" note that used
+  to live here was **wrong, and wrong in the expensive direction**: it explained
+  away a reference error as a solver property. There are two ways to reduce a
+  laminate to a beam `EI`, and on a strip with free long edges the right one is
+  `b (D11 - D12^2/D22)`, not `D11 * b`. They differ by 0.247%. Against the free-
+  edge value ccx lands within 0.01% on a converged mesh -- there is no
+  formulation offset to budget for. See `cases/smoke_cantilever/README.md` for
+  the mesh study.
+- Residual disagreement with a closed form is usually **discretization**, and it
+  is worth proving which before writing a tolerance around it: a formulation
+  offset does not move under refinement and a mesh error does. Refine and look.
 
 ## The load case
 
@@ -143,7 +160,11 @@ cross-check against energy -- see `cases/cantilever_ansys`.
 ## Regression cases — do not weaken these
 
 - `cases/smoke_cantilever` must pass after any change to `deck.py`,
-  `layup.py`, or `geometry.py`. It runs in under 5 seconds.
+  `layup.py`, or `geometry.py`. It runs in about a second. It checks the laminate
+  against hand CLPT, the large-deflection path against the closed-form elastica,
+  and -- through the tip draw-in of a reversed unsymmetric stack -- that the first
+  ply line really is the -z ply. Its README records what each check is blind to;
+  read that before assuming a green run covers something.
 - `cases/fin_20n` is pinned against a physical measurement and has a fixed
   tolerance.
 
