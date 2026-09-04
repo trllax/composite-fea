@@ -39,3 +39,13 @@ modules land in this order, with a review after each:
 2. `layup.py`, `deck.py`
 3. `geometry.py`
 4. `sweep.py`, `post.py`
+
+## Sweep (U-bend ply count)
+
+`compfea-sweep` varies `[0/90]_ns` ply count on the strip U-bend and reports
+tip-normal spring forces **F_90** and **F_180** from ELSE energy (`F = M/L`,
+not tip |RF|). See `cases/sweep_ubend/README.md`.
+
+```bash
+compfea-sweep --n-pairs 1 2 3 --ply-mm 0.1
+```
