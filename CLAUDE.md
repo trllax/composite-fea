@@ -61,6 +61,17 @@ tests/
   approximated by giving inboard zones longer stacks than outboard zones.
 - Fiber reference direction is set with `*ORIENTATION`, +x along the part's
   long axis.
+- Ply angles are `*ORIENTATION` names, not degrees. ccx reads field 4 of a
+  composite ply line as the name of an `*ORIENTATION` card, so a layup emits
+  one card per distinct angle, each rotated about the shell normal. Writing
+  the angle there fails with "nonexistent orientation".
+
+  ```
+  *ORIENTATION, NAME=ori_p45, SYSTEM=RECTANGULAR
+  0.70710678, 0.70710678, 0., -0.70710678, 0.70710678, 0.
+  *SHELL SECTION, COMPOSITE, ELSET=zone_a
+  0.25, , cfrp, ori_p45
+  ```
 - Material is `*ELASTIC, TYPE=ENGINEERING CONSTANTS` (9 constants).
 
 ## The load case
@@ -72,7 +83,8 @@ regime.
 
 ```
 *STEP, NLGEOM, INC=2000
-*STATIC, 0.02, 1.0, 1.E-5, 0.05
+*STATIC
+0.02, 1.0, 1.E-5, 0.05
 *BOUNDARY
 load_ref, 6, 6, 1.5708
 *NODE PRINT, NSET=fixed_end, TOTALS=YES
@@ -101,6 +113,10 @@ A run is valid only if **both** hold:
 
 1. `ccx` exits zero, and
 2. the last increment in the `.sta` file reached total time 1.0.
+
+Neither condition is redundant. `ccx` skips keywords it does not recognise, so
+a deck that ends up with no `*STEP` is reported as "Job finished" with exit 0
+and an empty `.sta` — a clean exit status on its own proves nothing.
 
 A partially converged solve produces a reaction force that looks fine and is
 meaningless. `run.py` raises on failure — it does not return a number. Do not
