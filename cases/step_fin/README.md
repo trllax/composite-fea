@@ -24,3 +24,30 @@ mesh = mesh_step("test_fin_2.step", size_mm=40)
 
 Note: in `test_fin_2.step`, `HALF` and `QUARTER` share the same x-span, so
 their ELSETs match until the CAD spans differ.
+
+## Covered plies -> COMPOSITE
+
+```python
+from compfea.step_mesh import mesh_step
+from compfea.layup import Ply, coverages_from_mesh, layup_from_coverage, mesh_elsets_for_stacks
+from compfea.geometry import Mesh
+from compfea.deck import assemble
+
+mesh = mesh_step("test_fin_2.step", size_mm=40)
+plies = [
+    Ply(0.15, 0.0, coverage="FULL"),
+    Ply(0.15, 90.0, coverage="FULL"),
+    Ply(0.10, 0.0, coverage="z_3_4ths"),
+    Ply(0.20, 0.0, coverage="TIP"),
+]
+cov = coverages_from_mesh(mesh.elsets)
+layup, stacks = layup_from_coverage(plies, cov, long_axis="x")  # span is +x on this STEP
+mesh = Mesh(
+    nodes=mesh.nodes, elements=mesh.elements, nsets=mesh.nsets,
+    elsets=mesh_elsets_for_stacks(stacks, all_elements=mesh.elsets["blade"]),
+    heading=mesh.heading,
+)
+deck = assemble(mesh_inp=mesh.to_inp(), layup=layup, initial_bc="*BOUNDARY\nfixed_end, 1, 6")
+```
+
+Use the sanitized mask names from the mesh (`z_3_4ths`, not `3_4ths`).
