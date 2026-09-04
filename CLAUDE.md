@@ -198,6 +198,25 @@ reading a pile of files into this conversation — mesh dumps, `.frd` contents,
 sweep logs, solver source. Investigation belongs in a separate context window;
 only the conclusion belongs here.
 
+Match the subagent's model to the task, with the `model` argument on the Agent
+tool. Cheap work does not need a frontier model, and physics review does not
+survive a cheap one.
+
+- **haiku** — mechanical retrieval with an unambiguous answer: grep for a
+  keyword, tail a `sweep.log`, count elements in a mesh, list the node sets in
+  an `.inp`, confirm a file exists. No judgement, no synthesis.
+- **sonnet** — the default for exploration and summarizing: trace how a value
+  flows through `src/compfea/`, triage a failed sweep across many logs, work
+  out which increment a solve stalled at. Multi-file reading where the answer
+  is still a matter of fact.
+- **opus** — anything where being wrong is expensive and looks fine: the
+  step-4 adversarial diff review, unit checks, ply ordering, convergence
+  handling, `.inp` card semantics, or interpreting a result that seems
+  anomalously stiff or soft. Never downgrade step 4 to save time.
+
+When in doubt between two tiers, take the higher one for anything that touches
+the deck or the physics, and the lower one for anything that only reads files.
+
 Build order when a module does not exist yet: `run.py` -> `layup.py` and
 `deck.py` -> `geometry.py` -> `sweep.py` and `post.py`. Stop after each for
 review. Do not scaffold all five at once.
