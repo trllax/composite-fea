@@ -37,7 +37,7 @@ add or change a material card, state the units you used in the commit message.
 
 ```
 src/compfea/
-  geometry.py     gmsh API -> planform surface -> quad8 mesh -> .inp
+  geometry.py     gmsh API -> planform outline -> quad8 mesh + zone ELSETs -> .inp
   layup.py        design vector -> *SHELL SECTION, COMPOSITE blocks
   deck.py         assemble complete .inp from templates/base.inp
   run.py          subprocess ccx, validate convergence, parse .dat
@@ -82,6 +82,29 @@ tests/
   0.25, , cfrp, ori_p45
   ```
 - Material is `*ELASTIC, TYPE=ENGINEERING CONSTANTS` (9 constants).
+- Meshes come from `geometry.py` (gmsh). Four things there are load-bearing and
+  none of them announce themselves:
+  - **quad8 is gmsh element type 16**, not 10. Type 10 is the 9-node quad, and it
+    is what `getElementType("Quadrangle", 2)` returns. `Mesh.SecondOrderIncomplete
+    = 1` is what makes the mesh serendipity and therefore S8R.
+  - **The curve-loop direction sets the element normal, and the normal decides
+    which ply is at -z.** A clockwise outline gives every element a -z normal and
+    inverts every unsymmetric stack in the model, silently. `geometry.py` forces
+    the outline counter-clockwise and then checks every element.
+  - gmsh's quad8 node order already matches CalculiX's, so connectivity passes
+    through unpermuted. Asserted in `tests/test_geometry.py`, not assumed.
+  - Recombination is not guaranteed to give all quads. A mixed mesh is refused,
+    because only quad8 elements are read back: the triangles would be dropped,
+    leaving a hole in the part and nodes attached to nothing, and ccx solves a
+    deck with a hole in it without complaint.
+  - Spanwise position is measured from the root edge, and `geometry.py` refuses
+    an outline whose root is not the inboard end. Zone fractions and the camber
+    map both depend on it, and both go wrong quietly if it is not so.
+- Initial curvature is applied **after** meshing, as an arc-length-preserving map
+  of the flat blade. Lifting with `z = f(y)` instead stretches the span and moves
+  the stiffness as the cube of the length. Only single (developable) curvature is
+  supported: a flat laminate cannot take double curvature without in-plane strain,
+  and that residual stress is modelled nowhere here.
 - ccx has no trailing comments. `**` must start its own line; put it after data
   on a card and the card fails to parse.
 - The "ccx's S8R composite shell is ~0.25% softer than hand CLPT" note that used
