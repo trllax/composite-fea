@@ -73,6 +73,11 @@ tests/
   0.25, , cfrp, ori_p45
   ```
 - Material is `*ELASTIC, TYPE=ENGINEERING CONSTANTS` (9 constants).
+- ccx has no trailing comments. `**` must start its own line; put it after data
+  on a card and the card fails to parse.
+- ccx's S8R composite shell is systematically ~0.25% softer than hand CLPT,
+  measured in the linear range, so it is a formulation offset and not a
+  convergence error. Anything pinned tighter than ~0.5% sits inside it.
 
 ## The load case
 
@@ -104,6 +109,11 @@ driven DOF live in that part's case directory, not here.
   returning wrong answers and diverging on thin-shell bending where SPOOLES
   and Pardiso are correct. If you have a reason to try it, `cases/fin_20n`
   must pass first.
+- The conda-forge `calculix=2.23` build links **SPOOLES only**. `SOLVER=PARDISO`
+  answers "the PARDISO library is not linked", and so do PASTIX, TAUCS and SGI.
+  The only alternatives here are `ITERATIVE SCALING` and `ITERATIVE CHOLESKY`,
+  which measured ~140x slower on a shell bending model. Note `SOLVER=` belongs
+  on `*STATIC`; put it on `*STEP` and it is silently ignored.
 - `sweep.py` takes an explicit `--jobs`, defaulting to `cpu_count() - 2`.
   Never saturate the machine.
 
@@ -123,6 +133,12 @@ meaningless. `run.py` raises on failure — it does not return a number. Do not
 add a fallback path that returns the last available increment.
 
 Parse the `.dat` file for reactions. Do not parse `.frd`.
+
+Reaction **moments** need a different route: `*NODE PRINT` has no `RM` label,
+`*RIGID BODY` is rejected on shell nodes, and `*SECTION PRINT` silently returns
+zeros for `*SHELL SECTION, COMPOSITE` (it works for a plain shell section, which
+is what makes the zeros so easy to trust). Integrate ply stresses instead and
+cross-check against energy -- see `cases/cantilever_ansys`.
 
 ## Regression cases — do not weaken these
 
