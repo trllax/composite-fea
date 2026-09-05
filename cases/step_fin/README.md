@@ -45,6 +45,23 @@ is complete and correct (`results/test_fin_2.msh` holds 335 quad8 **plus** the
 `getElementsByType(quad8)` alone. Compare element counts between the two files,
 or open `deck.inp` in gmsh rather than the `.msh`.
 
+## The guard is on the property, not the cause
+
+`mesh_step` refuses a tile carrying non-quad8 elements, and separately calls
+`geometry.check_watertight`, which requires the free edges of the quad mesh to
+form exactly one loop -- the outline. A second loop is a hole; an edge shared by
+more than two elements is not a sheet.
+
+Both checks exist because the type check alone is not enough. It enumerates one
+cause. A tile that meshes to **zero** elements passes it and still drops a hole,
+and so would a seam whose two tiles fail to share nodes. `check_watertight` does
+not care which of those happened.
+
+Note that counting orphan nodes does **not** detect this, and neither does
+looking at the mesh in gmsh -- an interior element shares every node with its
+neighbours, so deleting it orphans nothing, and gmsh still holds the elements
+the deck lost. Both are pinned in `tests/test_geometry.py`.
+
 ## Coverage
 
 Each Onshape product name (`FULL`, `HALF`, `TIP`, …) becomes an ELSET mask.

@@ -22,7 +22,13 @@ from pathlib import Path
 import gmsh
 import numpy as np
 
-from compfea.geometry import GeometryError, Mesh, _GMSH_QUAD8, _snap
+from compfea.geometry import (
+    GeometryError,
+    Mesh,
+    _GMSH_QUAD8,
+    _snap,
+    check_watertight,
+)
 
 # Onshape STEP AP242 length unit is metre; CalculiX decks here are mm.
 _STEP_M_TO_MM = 1000.0
@@ -317,6 +323,7 @@ def _orient_normals_outward(mesh: Mesh) -> Mesh:
         )
     )
     _check_normals_up(out)
+    check_watertight(out, what="STEP mesh")
     return out
 
 

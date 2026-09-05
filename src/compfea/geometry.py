@@ -465,6 +465,7 @@ def mesh_outline(
         heading=heading,
     )
     _check_normals(mesh, flat_nodes, camber, span, root_y)
+    check_watertight(mesh, what="meshed outline")
     return mesh
 
 
@@ -620,6 +621,86 @@ def _apply_camber(
         )
         for n, yy, zz in zip(ids, y, z, strict=True)
     }
+
+
+def check_watertight(mesh: Mesh, *, what: str = "mesh") -> None:
+    """Refuse a shell mesh with a hole in it.
+
+    Checks the property rather than any particular cause. A quad mesh of one
+    connected sheet has exactly one loop of free edges -- its outline. Every
+    interior edge is shared by exactly two elements. A second loop is a hole.
+
+    This is deliberately not a check on element types. Holes have arrived here
+    from a tile that recombined to quad8 *plus* triangles (only quad8 is read
+    back, so the triangles vanish), and can equally arrive from a tile that
+    meshes to nothing at all, or from a seam where two tiles fail to share
+    nodes. Enumerating those causes is how the first one survived: it was
+    checked only when a tile produced zero quad8, so the mixed case -- the one
+    that actually happened -- was never tested. ccx solves a holed deck without
+    complaint, no node is orphaned by an interior hole, and gmsh's own display
+    is complete because gmsh still has the elements that the deck lost. Nothing
+    downstream notices. So assert the property, once, on the way out.
+
+    An edge shared by three or more elements is non-manifold and is refused for
+    the same reason: it is not a sheet.
+    """
+    from collections import deque
+
+    shared: dict[frozenset[int], int] = {}
+    for conn in mesh.elements.values():
+        corners = conn[:4]
+        for i in range(4):
+            edge = frozenset((corners[i], corners[(i + 1) % 4]))
+            shared[edge] = shared.get(edge, 0) + 1
+
+    over = [e for e, n in shared.items() if n > 2]
+    if over:
+        raise GeometryError(
+            f"{what} has {len(over)} edge(s) shared by more than two elements; "
+            "that is not a single shell sheet"
+        )
+
+    adjacent: dict[int, set[int]] = {}
+    for edge, count in shared.items():
+        if count == 1:
+            a, b = tuple(edge)
+            adjacent.setdefault(a, set()).add(b)
+            adjacent.setdefault(b, set()).add(a)
+    if not adjacent:
+        raise GeometryError(f"{what} has no free edges at all; it has no outline")
+
+    seen: set[int] = set()
+    loops: list[list[int]] = []
+    for start in adjacent:
+        if start in seen:
+            continue
+        queue = deque([start])
+        seen.add(start)
+        loop = []
+        while queue:
+            node = queue.popleft()
+            loop.append(node)
+            for other in adjacent[node]:
+                if other not in seen:
+                    seen.add(other)
+                    queue.append(other)
+        loops.append(loop)
+
+    if len(loops) > 1:
+        interior = sorted(loops, key=len)[:-1]
+        where = []
+        for loop in interior[:3]:
+            xs = [mesh.nodes[n][0] for n in loop]
+            ys = [mesh.nodes[n][1] for n in loop]
+            where.append(
+                f"{len(loop)} nodes near x={sum(xs) / len(xs):.1f}, "
+                f"y={sum(ys) / len(ys):.1f}"
+            )
+        raise GeometryError(
+            f"{what} has {len(loops) - 1} hole(s): free edges form {len(loops)} "
+            f"loops, not one outline ({'; '.join(where)}). Elements are missing "
+            "from the sheet -- ccx would solve the holed part without complaint"
+        )
 
 
 def _zone_elsets(
