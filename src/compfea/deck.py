@@ -65,8 +65,13 @@ def tip_u_clamp_body(
     *,
     energy_elset: str = "blade",
     tip_nset: str = "far_face",
+    node_file: bool = False,
 ) -> str:
-    """Step body: prescribe tip node translations; print RF + ELSE."""
+    """Step body: prescribe tip node translations; print RF + ELSE.
+
+    ``node_file=True`` adds ``*NODE FILE`` / U so the ``.frd`` gets DISP at
+    the end of this step (omit on intermediate steps to keep FRDs small).
+    """
     lines = ["*BOUNDARY"]
     for n, (ux, uy, uz) in sorted(node_u.items()):
         lines.append(f"{n}, 1, 1, {ux:.10f}")
@@ -78,4 +83,6 @@ def tip_u_clamp_body(
         f"*EL PRINT, ELSET={energy_elset}, TOTALS=ONLY",
         "ELSE",
     ]
+    if node_file:
+        lines += ["*NODE FILE", "U"]
     return "\n".join(lines)

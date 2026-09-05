@@ -24,6 +24,12 @@ import seaborn as sns
 
 from compfea.run import parse_dat_energy
 from compfea.ubend import force_at_theta, step_index_for, theta_grid_deg
+from compfea.shapes import (
+    parse_nodes_elements,
+    parse_nset,
+    plot_bend_side,
+    plot_planform,
+)
 
 REPORT_DEG = (90.0, 180.0)
 
@@ -188,6 +194,46 @@ def post_run(
     return meta
 
 
+def shapes_run(
+    run_dir: str | Path,
+    *,
+    arm_mm: float,
+    long_axis: str = "x",
+    angles_deg: Sequence[float] = (45.0, 90.0, 135.0, 180.0),
+) -> dict:
+    """Planform + circular-arc side poses from the run's ``deck.inp`` / ``job.inp``."""
+    run_dir = Path(run_dir)
+    inp = run_dir / "deck.inp"
+    if not inp.is_file():
+        inp = run_dir / "ccx" / "job.inp"
+    if not inp.is_file():
+        raise FileNotFoundError(f"no deck.inp or ccx/job.inp under {run_dir}")
+    nodes, elements = parse_nodes_elements(inp)
+    tip = parse_nset(inp, "far_face")
+    heal = parse_nset(inp, "fixed_end")
+    axis = 0 if long_axis == "x" else 1
+    s0 = max(nodes[n][axis] for n in heal) if heal else min(v[axis] for v in nodes.values())
+    plan = plot_planform(
+        nodes,
+        elements,
+        run_dir / "post_planform.png",
+        title=f"Undeformed mid-surface  ({inp.name})",
+        tip_ids=tip,
+        heal_ids=heal,
+    )
+    # only plot targets up to angles that make sense; include 90 always for saved 90 run
+    side = plot_bend_side(
+        nodes,
+        run_dir / "post_bend_side.png",
+        length_mm=arm_mm,
+        s0=s0,
+        long_axis=long_axis,
+        angles_deg=angles_deg,
+        title=f"Tip-drive circular poses  L={arm_mm:g} mm",
+    )
+    return {"planform": str(plan), "bend_side": str(side), "s0": s0, "n_nodes": len(nodes)}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description="Post tip U-bend: ELSE energy -> F(θ) CSV + SVG"
@@ -212,6 +258,10 @@ def main(argv: list[str] | None = None) -> int:
         help="default: floor(tmax) from the .dat",
     )
     p.add_argument("--elset", default="blade")
+    p.add_argument("--shapes", action="store_true",
+                   help="also write planform + circular tip-drive side plots")
+    p.add_argument("--long-axis", choices=("x", "y"), default="x",
+                   help="span axis for shape plots (fin=x, strip=y)")
     args = p.parse_args(argv)
 
     meta = post_run(
@@ -227,6 +277,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"tmax {meta['tmax']:g}  angles={meta['n_angles']}")
     for k, v in meta["summary"].items():
         print(f"  {k} = {v:.6g}")
+    if args.shapes:
+        sh = shapes_run(
+            args.run_dir, arm_mm=args.arm_mm, long_axis=args.long_axis
+        )
+        print(f"planform  {sh['planform']}")
+        print(f"bend_side {sh['bend_side']}")
     return 0
 
 
