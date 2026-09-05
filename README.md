@@ -49,3 +49,13 @@ not tip |RF|). See `cases/sweep_ubend/README.md`.
 ```bash
 compfea-sweep --n-pairs 1 2 3 --ply-mm 0.1
 ```
+
+## Post-processing
+
+Tip U-bend metric is tip-normal spring force from ELSE energy (not tip |RF|):
+
+```
+compfea-post results/fin_ubend_90_saved --arm-mm 1002.26
+```
+
+Writes `post_F_theta.csv`, `post_F_theta.svg`, and `post_meta.json` in the run dir.

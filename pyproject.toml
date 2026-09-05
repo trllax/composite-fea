@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 compfea-sweep = "compfea.sweep:main"
+compfea-post = "compfea.post:main"
 
 [build-system]
 requires = ["hatchling"]
