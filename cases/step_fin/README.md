@@ -51,3 +51,13 @@ deck = assemble(mesh_inp=mesh.to_inp(), layup=layup, initial_bc="*BOUNDARY\nfixe
 ```
 
 Use the sanitized mask names from the mesh (`z_3_4ths`, not `3_4ths`).
+
+## Tip U-bend runs
+
+```bash
+# HEAL mask clamped, tip edge driven; span along +x
+python cases/step_fin/run_ubend.py --start-deg 1 --end-deg 90 --step-deg 1 --threads 5
+```
+
+Saved 90° solve (do not overwrite): `results/fin_ubend_90_saved/`
+(`results/fin_ubend_90/` is the same run). Post reads energy from `ccx/job.dat`.

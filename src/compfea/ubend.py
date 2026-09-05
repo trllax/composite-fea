@@ -32,11 +32,19 @@ def tip_length_mm(
     *,
     tip_nset: str = "far_face",
     root_nset: str = "fixed_end",
+    long_axis: str = "y",
 ) -> float:
-    """Undeformed tip station minus root station along y (long axis)."""
-    tip_ys = [mesh.nodes[n][1] for n in mesh.nsets[tip_nset]]
-    root_ys = [mesh.nodes[n][1] for n in mesh.nsets[root_nset]]
-    return max(tip_ys) - min(root_ys)
+    """Free length: tip station minus outboard clamp station along ``long_axis``.
+
+    For a bonded clamp patch (e.g. HEAL mask), the arm is tip minus *max*
+    root-set coordinate along the span, not the inboard edge.
+    """
+    if long_axis not in ("x", "y"):
+        raise ValueError(f"long_axis must be 'x' or 'y', not {long_axis!r}")
+    axis = 0 if long_axis == "x" else 1
+    tip = [mesh.nodes[n][axis] for n in mesh.nsets[tip_nset]]
+    root = [mesh.nodes[n][axis] for n in mesh.nsets[root_nset]]
+    return max(tip) - max(root)
 
 
 def tip_displacements(
@@ -45,24 +53,41 @@ def tip_displacements(
     *,
     tip_nset: str = "far_face",
     length_mm: float | None = None,
+    long_axis: str = "y",
 ) -> dict[int, tuple[float, float, float]]:
-    """Prescribed U (ux, uy, uz) for each tip node at tip-tangent ``theta_rad``.
+    """Prescribed U for each tip node at tip-tangent ``theta_rad``.
 
-    The tip edge translates as a rigid width line on a circular arc of radius
-    ``L / θ``. Each node keeps its undeformed x.
+    Tip edge translates as a rigid line on a circular arc of radius ``L / θ``
+    in the (long_axis, z) plane. The transverse in-plane coordinate is held.
     """
     if theta_rad <= 0:
         raise ValueError("theta must be > 0")
-    length = tip_length_mm(mesh) if length_mm is None else length_mm
+    if long_axis not in ("x", "y"):
+        raise ValueError(f"long_axis must be 'x' or 'y', not {long_axis!r}")
+    length = (
+        tip_length_mm(mesh, tip_nset=tip_nset, long_axis=long_axis)
+        if length_mm is None
+        else length_mm
+    )
     if length <= 0:
         raise ValueError(f"length must be > 0, got {length}")
     r = length / theta_rad
-    y_t = r * math.sin(theta_rad)
-    z_t = r * (1.0 - math.cos(theta_rad))
+    s_t = r * math.sin(theta_rad)  # along undeformed long axis from clamp edge
+    z_lift = r * (1.0 - math.cos(theta_rad))
+    axis = 0 if long_axis == "x" else 1
+    # Clamp outboard station; tip target along axis = clamp + s_t
+    root_axis = [mesh.nodes[n][axis] for n in mesh.nsets["fixed_end"]]
+    s0 = max(root_axis)
+    target_s = s0 + s_t
     out: dict[int, tuple[float, float, float]] = {}
     for nid in mesh.nsets[tip_nset]:
         x0, y0, z0 = mesh.nodes[nid]
-        out[nid] = (0.0, y_t - y0, z_t - z0)
+        if long_axis == "y":
+            # keep x; drive y,z (strip convention)
+            out[nid] = (0.0, target_s - y0, z0 + z_lift - z0)
+        else:
+            # keep y; drive x,z (fin span along +x)
+            out[nid] = (target_s - x0, 0.0, z0 + z_lift - z0)
     return out
 
 
@@ -88,6 +113,7 @@ def build_deck(
     layup: Layup,
     angles_deg: Sequence[float],
     *,
+    long_axis: str = "y",
     heading: str = "",
     static_line: str = DEFAULT_STATIC_LINE,
     inc: int = DEFAULT_INC,
@@ -97,7 +123,11 @@ def build_deck(
         raise ValueError("angles_deg must not be empty")
     steps = [
         StaticStep(
-            tip_u_clamp_body(tip_displacements(mesh, math.radians(float(deg)))),
+            tip_u_clamp_body(
+                tip_displacements(
+                    mesh, math.radians(float(deg)), long_axis=long_axis
+                )
+            ),
             inc=inc,
             static_line=static_line,
         )

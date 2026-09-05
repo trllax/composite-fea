@@ -246,13 +246,15 @@ def solve(
     ccx: str = "ccx",
     timeout_s: float = 1800.0,
     final_time: float = _DEFAULT_FINAL_TIME,
+    threads: int = 1,
 ) -> SolveResult:
     """Solve ``inp_path`` in its own directory and return the converged result.
 
     The deck is copied into ``run_dir`` as ``<job_name>.inp`` and solved there,
     so concurrent sweep jobs cannot collide on ccx's job-derived scratch file
-    names. Each solve is single-threaded on purpose: parallelism belongs at the
-    sweep level, not inside one solve.
+    names. ``threads`` sets ``OMP_NUM_THREADS`` for this solve (default 1).
+    Sweeps should keep threads=1 per job and parallelize across designs;
+    single interactive runs may raise this (SPOOLES scaling is limited).
 
     ``final_time`` is the total time the analysis must reach to count as
     converged. It defaults to 1.0, matching the single-step load-case template,
@@ -280,7 +282,9 @@ def solve(
     if inp_path.resolve() != deck.resolve():
         shutil.copyfile(inp_path, deck)
 
-    env = {**os.environ, "OMP_NUM_THREADS": "1"}
+    if threads < 1:
+        raise ValueError(f"threads must be >= 1, got {threads}")
+    env = {**os.environ, "OMP_NUM_THREADS": str(threads)}
     started = time.monotonic()
     try:
         completed = subprocess.run(
