@@ -140,6 +140,8 @@ def mesh_step(
         if not tiles:
             raise GeometryError("fragment left no surfaces to mesh")
 
+        for _dim, _tag in tiles:
+            gmsh.model.mesh.setRecombine(2, _tag)
         gmsh.option.setNumber("Mesh.RecombineAll", 1)
         gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 1)
         gmsh.option.setNumber("Mesh.ElementOrder", 2)
@@ -157,19 +159,26 @@ def mesh_step(
         tile_elems: dict[int, list[tuple[int, ...]]] = {}
         for dim, tag in tiles:
             etags, flat = gmsh.model.mesh.getElementsByType(_GMSH_QUAD8, tag)
+            # Check every tile, not only the empty ones. Only quad8 elements are
+            # read back below, so a tile that recombined to quad8 *plus* a few
+            # triangles would have those triangles dropped silently: a hole in
+            # the part, nodes attached to nothing, and ccx solving the holed
+            # deck without complaint. Gating this on `len(etags) == 0` meant the
+            # mixed case -- the one that actually happens -- was never checked.
+            types, type_tags, _ = gmsh.model.mesh.getElements(dim, tag)
+            bad = [
+                int(t)
+                for t, tags in zip(types, type_tags, strict=True)
+                if int(t) != _GMSH_QUAD8 and len(tags)
+            ]
+            if bad:
+                raise GeometryError(
+                    f"surface {tag} meshed as non-quad8 types {bad} alongside "
+                    f"{len(etags)} quad8; only quad8 is read back, so those "
+                    "elements would vanish and leave a hole. Refuse triangles "
+                    "for S8R."
+                )
             if len(etags) == 0:
-                # Allow empty tile only if some other type snuck in — refuse tris.
-                types, type_tags, _ = gmsh.model.mesh.getElements(dim, tag)
-                bad = [
-                    int(t)
-                    for t, tags in zip(types, type_tags, strict=True)
-                    if int(t) != _GMSH_QUAD8 and len(tags)
-                ]
-                if bad:
-                    raise GeometryError(
-                        f"surface {tag} meshed as non-quad8 types {bad}; "
-                        "refuse triangles for S8R"
-                    )
                 continue
             conn = np.array(flat, dtype=np.int64).reshape(len(etags), 8)
             tile_elems[tag] = [tuple(int(n) for n in row) for row in conn]
@@ -282,8 +291,13 @@ def _flip_quad8(conn: tuple[int, ...]) -> tuple[int, ...]:
 def _orient_normals_outward(mesh: Mesh) -> Mesh:
     """Force shell normals toward +z on the flat skin (first ply = -z face).
 
-    Onshape surfaces in this export face -z; HEAL is bent so its normal is
-    mostly in-plane. Flip any element with a clear -z normal component.
+    Onshape surfaces in this export face -z, so any element with a clear -z
+    normal is flipped. The flip alone is a heuristic and is not the guarantee:
+    the check afterwards is. Without it an element whose normal sits in the
+    ``[-0.1, 0)`` band is neither flipped nor caught, and every unsymmetric
+    stack on it is silently upside down -- the deck still solves and the
+    reaction still looks reasonable. geometry.py raises on exactly this; so
+    does this now.
     """
     flipped = dict(mesh.elements)
     n_flip = 0
@@ -291,12 +305,35 @@ def _orient_normals_outward(mesh: Mesh) -> Mesh:
         if normal[2] < -0.1:
             flipped[eid] = _flip_quad8(mesh.elements[eid])
             n_flip += 1
-    if n_flip == 0:
-        return mesh
-    return Mesh(
-        nodes=mesh.nodes,
-        elements=flipped,
-        nsets=mesh.nsets,
-        elsets=mesh.elsets,
-        heading=mesh.heading,
+    out = (
+        mesh
+        if n_flip == 0
+        else Mesh(
+            nodes=mesh.nodes,
+            elements=flipped,
+            nsets=mesh.nsets,
+            elsets=mesh.elsets,
+            heading=mesh.heading,
+        )
     )
+    _check_normals_up(out)
+    return out
+
+
+def _check_normals_up(mesh: Mesh) -> None:
+    """Every element normal must have a positive +z component after flipping.
+
+    Written as ``not (nz > 0)`` rather than ``nz <= 0`` because a degenerate
+    element gives a nan normal and every comparison against nan is False; the
+    other spelling waves those through. Same reasoning as
+    ``geometry._check_normals``.
+    """
+    for eid, normal in mesh.element_normals().items():
+        nz = float(normal[2])
+        if not nz > 0.0:
+            raise GeometryError(
+                f"element {eid} has normal {normal} after reorientation, which "
+                "does not face the laminate's +z side; the first ply line would "
+                "land on the wrong face and every unsymmetric stack on that "
+                "element would be inverted"
+            )

@@ -7,7 +7,10 @@ Whether ccx then reads it the way the physics needs is the job of
 
 from __future__ import annotations
 
+import importlib.util
 import math
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -17,9 +20,11 @@ from compfea.layup import (
     Layup,
     Ply,
     ZoneLayup,
+    UD_CFRP_GENERIC,
     cross_ply_symmetric,
     orientation_card,
     orientation_name,
+    woven_from_ud,
 )
 from compfea.metrics import f_spring
 
@@ -283,3 +288,89 @@ def test_f_spring_doubles_with_theta():
     _m90, f90 = f_spring(u90, th, arm)
     _m180, f180 = f_spring(u180, 2 * th, arm)
     assert f180 / f90 == pytest.approx(2.0)
+
+
+# --- woven derivation -------------------------------------------------------
+# Checked against cases/smoke_cantilever/clpt.py, which shares no code with
+# compfea. woven_from_ud claims a membrane identity; these pin exactly how far
+# that claim reaches, so nobody can quietly widen it into a bending one.
+
+_CASE = Path(__file__).resolve().parents[1] / "cases" / "smoke_cantilever"
+
+
+def _clpt():
+    spec = importlib.util.spec_from_file_location("layup_clpt", _CASE / "clpt.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _kw(ec):
+    return dict(e1=ec.e1, e2=ec.e2, nu12=ec.nu12, g12=ec.g12)
+
+
+WOVEN = woven_from_ud(UD_CFRP_GENERIC)
+TOTAL_MM = 1.0
+
+
+def test_woven_is_balanced_and_lands_on_real_weave_values():
+    assert WOVEN.e1 == pytest.approx(WOVEN.e2)
+    assert WOVEN.g13 == pytest.approx(WOVEN.g23)
+    assert WOVEN.nu13 == pytest.approx(WOVEN.nu23)
+    # out-of-plane pairs are averaged across the 0 and 90 plies, like g13/g23
+    assert WOVEN.nu13 == pytest.approx(0.375)
+    # Derived, not typed in -- but it has to come out somewhere a real 2x2
+    # twill actually lives, or the derivation is wrong.
+    assert WOVEN.e1 == pytest.approx(72332.7, rel=1e-4)
+    assert WOVEN.nu12 == pytest.approx(0.0375, rel=1e-4)
+    assert WOVEN.g12 == pytest.approx(UD_CFRP_GENERIC.g12)
+
+
+def test_woven_membrane_matches_a_ud_cross_ply_pair():
+    """The claim: A is identical to a [0/90] UD pair of the same thickness."""
+    clpt = _clpt()
+    ud = clpt.abd([0.0, 90.0], TOTAL_MM / 2, **_kw(UD_CFRP_GENERIC))
+    wov = clpt.abd([0.0], TOTAL_MM, **_kw(WOVEN))
+    for i in range(3):
+        for j in range(3):
+            assert ud[i, j] == pytest.approx(wov[i, j], rel=1e-9, abs=1e-9)
+
+
+def test_woven_has_no_extension_bending_coupling_but_the_ud_pair_does():
+    clpt = _clpt()
+    ud = clpt.abd([0.0, 90.0], TOTAL_MM / 2, **_kw(UD_CFRP_GENERIC))
+    wov = clpt.abd([0.0], TOTAL_MM, **_kw(WOVEN))
+    assert abs(wov[0, 3]) < 1e-9
+    assert abs(ud[0, 3]) > 1e3
+
+
+def test_woven_bending_matches_only_the_interleaved_stack():
+    """D is equal for [0/90]_n and far apart for the symmetric [0/90]_ns.
+
+    sweep.py builds the symmetric one, so this gap is what a UD-vs-woven sweep
+    point actually measures. If this test ever goes quiet, the two fibre types
+    have collapsed onto the same bending stiffness and the axis is dead.
+    """
+    clpt = _clpt()
+    wov2 = clpt.abd([0.0, 0.0], TOTAL_MM / 2, **_kw(WOVEN))
+
+    interleaved = clpt.abd([0.0, 90.0, 0.0, 90.0], TOTAL_MM / 4, **_kw(UD_CFRP_GENERIC))
+    assert interleaved[3, 3] == pytest.approx(wov2[3, 3], rel=1e-9)
+
+    symmetric = clpt.abd([0.0, 90.0, 90.0, 0.0], TOTAL_MM / 4, **_kw(UD_CFRP_GENERIC))
+    assert symmetric[3, 3] / wov2[3, 3] == pytest.approx(1.65625, rel=1e-6)
+
+
+def test_crimp_factor_scales_in_plane_only():
+    soft = woven_from_ud(UD_CFRP_GENERIC, crimp_factor=0.9)
+    assert soft.e1 == pytest.approx(0.9 * WOVEN.e1)
+    assert soft.g12 == pytest.approx(0.9 * WOVEN.g12)
+    assert soft.e3 == pytest.approx(WOVEN.e3)
+    assert soft.g13 == pytest.approx(WOVEN.g13)
+    assert soft.nu12 == pytest.approx(WOVEN.nu12)
+    with pytest.raises(ValueError):
+        woven_from_ud(UD_CFRP_GENERIC, crimp_factor=0.0)
+    with pytest.raises(ValueError):
+        woven_from_ud(UD_CFRP_GENERIC, crimp_factor=1.5)

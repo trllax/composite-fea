@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from compfea.metrics import linearity_deviation, moment_tangent
 from compfea.run import parse_dat_energy
 from compfea.ubend import force_at_theta, step_index_for, theta_grid_deg
 from compfea.shapes import (
@@ -62,7 +63,82 @@ def force_curve(
                 "F_N": f,
             }
         )
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    # M_nmm is the secant 2U/theta. Carry the tangent dU/dtheta next to it so
+    # the assumption behind F_N is a number in the output, not a claim in a
+    # docstring. Endpoints are nan by construction -- see metrics.moment_tangent.
+    if len(frame) >= 3:
+        theta_rad = [math.radians(t) for t in frame["theta_deg"]]
+        tangent = moment_tangent(list(frame["U_nmm"]), theta_rad)
+        frame["M_tan_nmm"] = tangent
+        frame["linearity_dev"] = linearity_deviation(list(frame["M_nmm"]), tangent)
+    else:
+        frame["M_tan_nmm"] = float("nan")
+        frame["linearity_dev"] = float("nan")
+    return frame
+
+
+def linearity_dev_near(
+    curve: pd.DataFrame, report_deg: Sequence[float] = REPORT_DEG
+) -> dict[str, float]:
+    """``linearity_dev`` at each reported angle, or at the nearest interior one.
+
+    The reported angles are what a sweep ranks on, so their deviation is the
+    one that decides whether F may be read as a force. The largest angle is
+    always the last row and therefore always ``nan`` (no central difference at
+    an endpoint), so fall back to the nearest angle that has one.
+
+    How far away that fallback lands depends on the grid: one degree on a
+    1-degree path, but a full five on the sweep's 5-degree default, where the
+    value keyed ``F_180`` is really the deviation at 175. Use
+    ``linearity_dev_theta`` to see which angle each value came from rather than
+    trusting the key.
+    """
+    out: dict[str, float] = {}
+    if "linearity_dev" not in curve or curve.empty:
+        return out
+    interior = curve.dropna(subset=["linearity_dev"])
+    if interior.empty:
+        return out
+    for deg in report_deg:
+        key = f"F_{int(deg) if float(deg).is_integer() else deg}"
+        if not (curve["theta_deg"] - float(deg)).abs().le(1e-9).any():
+            continue  # that angle was never solved
+        row = (interior["theta_deg"] - float(deg)).abs().idxmin()
+        out[key] = float(interior.loc[row, "linearity_dev"])
+    return out
+
+
+def linearity_dev_theta(
+    curve: pd.DataFrame, report_deg: Sequence[float] = REPORT_DEG
+) -> dict[str, float]:
+    """The angle each ``linearity_dev_near`` value was actually taken at."""
+    out: dict[str, float] = {}
+    if "linearity_dev" not in curve or curve.empty:
+        return out
+    interior = curve.dropna(subset=["linearity_dev"])
+    if interior.empty:
+        return out
+    for deg in report_deg:
+        key = f"F_{int(deg) if float(deg).is_integer() else deg}"
+        if not (curve["theta_deg"] - float(deg)).abs().le(1e-9).any():
+            continue
+        row = (interior["theta_deg"] - float(deg)).abs().idxmin()
+        out[key] = float(interior.loc[row, "theta_deg"])
+    return out
+
+
+def max_linearity_dev(curve: pd.DataFrame) -> float:
+    """Largest ``|linearity_dev|`` over the interior points, or nan if none.
+
+    This is the one number that says whether ``F_N`` may be read as the force at
+    that angle. Small: the response is the linear spring 2U/theta assumes.
+    Large: F_N is a secant average across a curved M(theta).
+    """
+    if "linearity_dev" not in curve:
+        return float("nan")
+    dev = curve["linearity_dev"].abs().dropna()
+    return float(dev.max()) if len(dev) else float("nan")
 
 
 def summary_at(
@@ -187,6 +263,9 @@ def post_run(
         "n_angles": len(angles),
         "tmax": tmax,
         "summary": summ,
+        "max_linearity_dev": max_linearity_dev(curve),
+        "linearity_dev_near": linearity_dev_near(curve),
+        "linearity_dev_theta": linearity_dev_theta(curve),
         "csv": str(csv_path),
         "svg": str(svg_path),
     }

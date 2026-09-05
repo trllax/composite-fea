@@ -62,7 +62,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--end-deg", type=float, default=180.0)
     p.add_argument("--start-deg", type=float, default=1.0)
     p.add_argument("--step-deg", type=float, default=1.0)
-    p.add_argument("--size-mm", type=float, default=40.0)
+    # 40 mm leaves triangles on one tile and mesh_step refuses that now.
+    # 17.0 is the coarsest size that recombines to all quad8 on this STEP,
+    # but 17.25 already fails; 16.0 keeps margin to that cliff.
+    p.add_argument("--size-mm", type=float, default=16.0)
     p.add_argument("--timeout-s", type=float, default=3600.0)
     p.add_argument("--threads", type=int, default=1,
                    help="OMP_NUM_THREADS for this solve (default 1)")

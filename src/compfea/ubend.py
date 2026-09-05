@@ -23,7 +23,14 @@ from compfea.metrics import f_spring
 DEFAULT_STEP_DEG = 5.0
 DEFAULT_START_DEG = 5.0
 DEFAULT_END_DEG = 180.0
-DEFAULT_STATIC_LINE = "0.005, 1.0, 1.E-8, 0.02"
+# Calibrated, not guessed: results/incr-calib solved [0/90]s at max increments
+# 0.02 / 0.05 / 0.1 / 0.25 / 0.5 and got bit-identical f_90 and f_180 (deviation
+# 0.00e+00) at 1.00x .. 5.43x speed. A converged elastic equilibrium does not
+# depend on the increment path, so the old 0.02 cap bought nothing but time: it
+# forced 53 increments per angle step where ccx wanted 8. 0.25 leaves the cap
+# non-binding while keeping a ceiling in reserve for stiffer designs; ccx cuts
+# back on its own if a step turns out to be hard.
+DEFAULT_STATIC_LINE = "0.05, 1.0, 1.E-8, 0.25"
 DEFAULT_INC = 8000
 
 

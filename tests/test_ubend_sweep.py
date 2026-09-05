@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from dataclasses import replace
+
 import pytest
 
 from compfea.layup import cross_ply_symmetric
@@ -136,11 +138,166 @@ def test_build_deck_emits_multi_step_tip_u_and_else():
 def test_sweep_layup_ply_counts():
     from compfea.sweep import Design, layup_for
 
-    d1 = Design(n_pairs=1, ply_mm=0.1)
-    d2 = Design(n_pairs=2, ply_mm=0.1)
-    assert d1.n_plies == 4
-    assert d2.n_plies == 8
+    d1 = Design(zone_pairs=(1,), ply_mm=0.1)
+    d2 = Design(zone_pairs=(2,), ply_mm=0.1)
+    assert d1.n_plies_by_zone == (4,)
+    assert d2.n_plies_by_zone == (8,)
     assert d1.stack_label == "[0/90]s"
+    assert d1.zone_elsets == ("blade",)
     plies = layup_for(d2).zones[0].plies
     assert len(plies) == 8
     assert [p.angle_deg for p in plies] == [0, 90, 0, 90, 90, 0, 90, 0]
+
+
+def test_zoned_design_stacks_are_symmetric_and_root_first():
+    from compfea.sweep import Design, layup_for
+
+    d = Design(zone_pairs=(3, 1), zones=(0.5,), ply_mm=0.1)
+    assert d.zone_elsets == ("zone_1", "zone_2")
+    assert d.n_plies_by_zone == (12, 4)
+    assert d.stack_label == "[0/90]_3s|[0/90]s"
+    layup = layup_for(d)
+    for zone in layup.zones:
+        angles = [p.angle_deg for p in zone.plies]
+        assert angles == angles[::-1], f"{zone.elset} stack is not symmetric"
+    assert layup.zones[0].elset == "zone_1"
+    assert layup.zones[0].thickness > layup.zones[1].thickness
+
+
+def test_zone_boundary_count_is_enforced():
+    from compfea.sweep import Design
+
+    with pytest.raises(ValueError, match="boundaries"):
+        Design(zone_pairs=(2, 1), zones=())
+    with pytest.raises(ValueError, match="boundaries"):
+        Design(zone_pairs=(2,), zones=(0.5,))
+
+
+def test_the_cache_key_moves_with_everything_that_reaches_the_deck():
+    """A key that misses an input silently returns a stale force.
+
+    The old key hashed the literal string "mat=placeholder_cfrp", so a material
+    edit reused the previous answer. Each of these must produce a new key.
+    """
+    from compfea.sweep import Design
+
+    base = Design(zone_pairs=(2,), ply_mm=0.1, angles=(0.0, 90.0), fiber="ud")
+    variants = [
+        Design(zone_pairs=(3,), ply_mm=0.1, angles=(0.0, 90.0), fiber="ud"),
+        Design(zone_pairs=(2,), ply_mm=0.15, angles=(0.0, 90.0), fiber="ud"),
+        Design(zone_pairs=(2,), ply_mm=0.1, angles=(45.0, -45.0), fiber="ud"),
+        Design(zone_pairs=(2,), ply_mm=0.1, angles=(0.0, 90.0), fiber="woven"),
+        Design(zone_pairs=(2, 2), zones=(0.5,), ply_mm=0.1, fiber="ud"),
+        # The solver setting changes the answer, so it must change the key.
+        Design(zone_pairs=(2,), ply_mm=0.1, static_line="0.02, 1.0, 1.E-8, 0.1"),
+    ]
+    keys = {base.cache_key()} | {v.cache_key() for v in variants}
+    assert len(keys) == len(variants) + 1
+    assert base.cache_key() == Design(zone_pairs=(2,), ply_mm=0.1).cache_key()
+
+
+def test_a_malformed_static_line_is_refused():
+    from compfea.sweep import Design
+
+    with pytest.raises(ValueError, match="initial, period, min, max"):
+        Design(zone_pairs=(1,), static_line="0.02, 1.0, 0.1")
+
+
+def test_material_fingerprint_covers_all_nine_constants():
+    from compfea.layup import UD_CFRP_GENERIC
+    from compfea.sweep import _material_fingerprint
+
+    base = _material_fingerprint(UD_CFRP_GENERIC)
+    for field in (
+        "e1", "e2", "e3", "nu12", "nu13", "nu23", "g12", "g13", "g23", "density",
+    ):
+        bumped = replace(
+            UD_CFRP_GENERIC, **{field: getattr(UD_CFRP_GENERIC, field) * 1.01}
+        )
+        assert _material_fingerprint(bumped) != base, f"{field} not in fingerprint"
+
+
+def test_the_grid_is_the_cartesian_product():
+    from compfea.sweep import build_parser, designs_from_args
+
+    args = build_parser().parse_args(
+        ["--zone-pairs", "2,1", "3,1", "--zones", "0.5",
+         "--fiber", "ud", "woven", "--ply-mm", "0.1", "0.15"]
+    )
+    designs = designs_from_args(args)
+    assert len(designs) == 2 * 2 * 2
+    assert len({d.cache_key() for d in designs}) == 8
+
+
+def test_zone_pairs_and_n_pairs_are_not_both_accepted():
+    from compfea.sweep import build_parser, designs_from_args
+
+    args = build_parser().parse_args(["--zone-pairs", "2", "--n-pairs", "3"])
+    with pytest.raises(SystemExit, match="not both"):
+        designs_from_args(args)
+
+
+def test_n_pairs_still_means_what_it_used_to():
+    from compfea.sweep import Design, build_parser, designs_from_args
+
+    args = build_parser().parse_args(["--n-pairs", "1", "2", "3"])
+    designs = designs_from_args(args)
+    assert [d.zone_pairs for d in designs] == [(1,), (2,), (3,)]
+    assert designs[0].cache_key() == Design(zone_pairs=(1,)).cache_key()
+
+
+def test_report_deg_is_in_the_cache_key():
+    """It sets how many *STEP blocks the deck has, so it must move the key.
+
+    Otherwise a cheap 90-degree evaluation caches under the key a 180-degree
+    one looks up, and the 180 request is served a row with no f_180 in it.
+    """
+    from compfea.sweep import Design
+
+    assert (
+        Design(zone_pairs=(1,), report_deg=(90.0,)).cache_key()
+        != Design(zone_pairs=(1,), report_deg=(90.0, 180.0)).cache_key()
+    )
+
+
+def test_a_zone_boundary_off_the_element_rows_is_refused():
+    """A fraction between rows snaps, so requested != delivered ply drop."""
+    from compfea.sweep import Design
+
+    with pytest.raises(ValueError, match="not a multiple"):
+        Design(zone_pairs=(2, 1), zones=(0.47,))
+    Design(zone_pairs=(2, 1), zones=(0.5,))  # on a row: fine
+
+
+def test_build_deck_is_told_the_long_axis(monkeypatch):
+    """It must be passed explicitly, not left to its own default of 'y'.
+
+    layup_for and tip_length_mm both use LONG_AXIS. If build_deck is left to
+    default while LONG_AXIS says 'x', the fibre direction and the moment arm
+    use x while the prescribed tip path still drives y -- a deck that converges
+    and reports a force for a load 90 degrees off the axis the cache key
+    records. The strip spans y, so flipping the constant cannot show this; what
+    matters is that the argument is handed over at all.
+    """
+    import compfea.sweep as sweep
+
+    seen = {}
+    real = sweep.build_deck
+
+    def spy(mesh, layup, angles, **kwargs):
+        seen.update(kwargs)
+        return real(mesh, layup, angles, **kwargs)
+
+    monkeypatch.setattr(sweep, "build_deck", spy)
+    sweep.deck_for(sweep.Design(zone_pairs=(1,), report_deg=(10.0,)))
+    assert seen.get("long_axis") == sweep.LONG_AXIS
+
+
+def test_deck_only_and_the_solve_build_the_same_deck():
+    """They were separate paths and had already drifted on end_deg."""
+    from compfea.sweep import Design, angles_for, deck_for
+
+    design = Design(zone_pairs=(1,), report_deg=(90.0,))
+    _deck, angles, _arm = deck_for(design)
+    assert angles == angles_for(design)
+    assert max(angles) == 90.0
