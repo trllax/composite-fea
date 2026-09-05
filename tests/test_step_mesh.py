@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from compfea.geometry import GeometryError
+from compfea.geometry import GeometryError, check_watertight
 from compfea.step_mesh import mesh_step, shell_x_ranges_mm
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,16 +67,33 @@ def _boundary_loops(mesh) -> list[int]:
     return sorted(sizes)
 
 
-def test_a_mesh_with_triangles_is_refused_not_silently_holed():
-    """Only quad8 is read back, so a stray triangle would vanish.
+def test_stray_triangles_are_kept_as_s6_not_dropped():
+    """At 40 mm one tile recombines to quad8 plus two tri6.
 
-    At 40 mm -- the size the fin U-bend runs used -- one tile recombines to
-    quad8 plus 6-node triangles. Dropping those leaves a hole that ccx solves
-    without complaint, and no node is orphaned by it, so nothing downstream
-    notices. It has to fail here.
+    Dropping them leaves a hole that ccx solves without complaint, orphans no
+    node, and is invisible in gmsh (which still holds the elements the deck
+    lost). On the strip, deleting one interior element of 128 moved the
+    reported force 2.5% against 0.8% of area. So they are read, as S6.
     """
-    with pytest.raises(GeometryError, match="non-quad8"):
-        mesh_step(FIN2, size_mm=40.0)
+    mesh = mesh_step(FIN2, size_mm=40.0)
+    tris = [c for c in mesh.elements.values() if len(c) == 6]
+    quads = [c for c in mesh.elements.values() if len(c) == 8]
+    assert len(tris) == 2 and len(quads) == 335
+    inp = mesh.to_inp()
+    # both types, one ELSET, so a single COMPOSITE section covers them
+    assert "*ELEMENT, TYPE=S8R, ELSET=blade" in inp
+    assert "*ELEMENT, TYPE=S6, ELSET=blade" in inp
+
+
+def test_a_triangle_dominated_mesh_is_refused():
+    """S6 is a stiffer bending element; a few is a tolerance, mostly is not."""
+    with pytest.raises(GeometryError, match="below the"):
+        mesh_step(FIN2, size_mm=40.0, quad_floor=0.999)
+
+
+def test_the_coarse_mesh_is_watertight_too():
+    """The property, not the element type, is what keeps holes out."""
+    check_watertight(mesh_step(FIN2, size_mm=40.0))
 
 
 def test_the_clean_mesh_is_watertight():

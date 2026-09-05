@@ -31,6 +31,21 @@ ROOT = Path(__file__).resolve().parents[2]
 STEP = ROOT / "test_fin_2.step"
 LONG_AXIS = "x"
 
+# The fin needs its own increment settings; the strip's calibrated default
+# (max 0.25) diverges here. Measured on this STEP at 40 mm, 1-degree steps,
+# varying only the max increment with the minimum held at 1.E-10:
+#
+#   max 0.25 -> diverges at ~88% of the first step
+#   max 0.1  -> converges, 21.5 s, 44 increments   <- adopted
+#   max 0.01 -> converges, 51.8 s, 211 increments  (the old hardcoded value)
+#
+# So there is a 2.4x saving here, not the strip's 5.4x. The wall is in step 1,
+# where a flat blade takes its first bend, and it is not caused by the S6
+# elements: none of the 46 diverging nodes belongs to a triangle, and the
+# all-quad 16 mm mesh diverges at the same point. The minimum increment matters
+# as much as the maximum -- 1.E-10 is what lets ccx grind through that step.
+FIN_STATIC_LINE = "0.001, 1.0, 1.E-10, 0.1"
+
 
 def default_plies():
     return [
@@ -67,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     # but 17.25 already fails; 16.0 keeps margin to that cliff.
     p.add_argument("--size-mm", type=float, default=16.0)
     p.add_argument("--timeout-s", type=float, default=3600.0)
+    p.add_argument("--static-line", default=FIN_STATIC_LINE)
     p.add_argument("--threads", type=int, default=1,
                    help="OMP_NUM_THREADS for this solve (default 1)")
     p.add_argument(
@@ -88,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         layup,
         angles,
         long_axis=LONG_AXIS,
-        static_line="0.001, 1.0, 1.E-10, 0.01",
+        static_line=args.static_line,
         heading=(
             f"fin U-bend: HEAL clamp, tip edge U, L={arm:.3f} mm, "
             f"{angles[0]:g}→{angles[-1]:g} deg"

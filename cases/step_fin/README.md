@@ -105,6 +105,48 @@ deck = assemble(mesh_inp=mesh.to_inp(), layup=layup, initial_bc="*BOUNDARY\nfixe
 
 Use the sanitized mask names from the mesh (`z_3_4ths`, not `3_4ths`).
 
+## Triangles are kept, not dropped
+
+Recombination does not always give all quads on a fragmented tile. Those strays
+are now emitted as **S6** alongside the S8R, in the same ELSET under one
+`*SHELL SECTION, COMPOSITE` -- verified against ccx, which accepts both mixed.
+`mesh_step` refuses anything that is neither, and refuses a mesh below
+`quad_floor` (default 98%), because S6 is a stiffer bending element than S8R and
+a triangle-dominated mesh is a different model.
+
+Dropping them was never cheap. On the strip, deleting one interior element of
+128 -- 0.8% of the area -- moved the reported force **2.5%**, because a hole
+severs load path rather than just removing material.
+
+| `--size-mm` | elements | tri6 | quads |
+| --- | --- | --- | --- |
+| 40 | 337 | 2 | 99.4% |
+| 30 | 540 | 2 | 99.6% |
+| 20 | 1174 | 4 | 99.7% |
+| 16 | 1786 | 0 | 100% |
+
+So 40 mm is usable again: 337 elements against 1786 at 16 mm. Pick the size on
+mesh convergence, not on triangle avoidance -- that study has not been done.
+
+## Solver increments: the strip's calibration does not transfer
+
+The sweep's `DEFAULT_STATIC_LINE` (max 0.25) **diverges on the fin**. Measured
+here at 40 mm with 1-degree steps, minimum increment held at `1.E-10`:
+
+| max increment | result |
+| --- | --- |
+| 0.25 | diverges at ~88% of step 1 |
+| 0.1 | converges, 21.5 s, 44 increments (**adopted**) |
+| 0.01 | converges, 51.8 s, 211 increments (the old value) |
+
+2.4x here, not the strip's 5.4x. The minimum increment matters as much as the
+maximum: it is what lets ccx cut back through the first step, where a flat blade
+takes its first bend.
+
+**It is not the triangles.** None of the 46 diverging nodes belongs to an S6
+element (0 of 296 mentions), and the all-quad 16 mm mesh diverges at the same
+point. Calibrate per model; do not carry a solver setting across geometries.
+
 ## Tip U-bend runs
 
 ```bash

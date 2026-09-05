@@ -26,9 +26,13 @@ from compfea.geometry import (
     GeometryError,
     Mesh,
     _GMSH_QUAD8,
+    _corners,
     _snap,
+    check_quad_fraction,
     check_watertight,
 )
+
+_GMSH_TRI6 = 9
 
 # Onshape STEP AP242 length unit is metre; CalculiX decks here are mm.
 _STEP_M_TO_MM = 1000.0
@@ -105,9 +109,15 @@ def mesh_step(
     size_mm: float = 40.0,
     coverage_tol_mm: float = 2.0,
     clamp_coverage: str | None = "HEAL",
+    quad_floor: float = 0.98,
     heading: str = "",
 ) -> Mesh:
-    """Import a STEP of nested coverage shells -> S8R ``Mesh``.
+    """Import a STEP of nested coverage shells -> a shell ``Mesh``.
+
+    Mostly S8R, with any stray tri6 kept as S6 rather than dropped.
+    ``quad_floor`` is how triangle-heavy the result may get before it is
+    refused outright -- a few strays cost a little local bending accuracy, a
+    mesh that is mostly triangles is a different model.
 
     ``fragment`` imprints overlapping shell boundaries onto a single set of
     tiles so ply drops get mesh edges. Coverage ELSETs are ACP-style masks:
@@ -164,34 +174,38 @@ def mesh_step(
         # Elements per tile entity (for coverage), then global renumber.
         tile_elems: dict[int, list[tuple[int, ...]]] = {}
         for dim, tag in tiles:
-            etags, flat = gmsh.model.mesh.getElementsByType(_GMSH_QUAD8, tag)
-            # Check every tile, not only the empty ones. Only quad8 elements are
-            # read back below, so a tile that recombined to quad8 *plus* a few
-            # triangles would have those triangles dropped silently: a hole in
-            # the part, nodes attached to nothing, and ccx solving the holed
-            # deck without complaint. Gating this on `len(etags) == 0` meant the
-            # mixed case -- the one that actually happens -- was never checked.
+            # Read quad8 AND tri6. Recombination does not always give all
+            # quads on a fragmented tile, and dropping the strays is not a
+            # small error: deleting one interior element of 128 moved the
+            # reported force 2.5%, against 0.8% of area, because it severs
+            # load path. ccx takes S6 in a *SHELL SECTION, COMPOSITE and in
+            # the same ELSET as S8R. Anything that is neither is refused --
+            # it would still vanish.
             types, type_tags, _ = gmsh.model.mesh.getElements(dim, tag)
             bad = [
                 int(t)
                 for t, tags in zip(types, type_tags, strict=True)
-                if int(t) != _GMSH_QUAD8 and len(tags)
+                if int(t) not in (_GMSH_QUAD8, _GMSH_TRI6) and len(tags)
             ]
             if bad:
                 raise GeometryError(
-                    f"surface {tag} meshed as non-quad8 types {bad} alongside "
-                    f"{len(etags)} quad8; only quad8 is read back, so those "
-                    "elements would vanish and leave a hole. Refuse triangles "
-                    "for S8R."
+                    f"surface {tag} meshed as unsupported types {bad}; only "
+                    "quad8 (S8R) and tri6 (S6) are read back, so those "
+                    "elements would vanish and leave a hole"
                 )
-            if len(etags) == 0:
-                continue
-            conn = np.array(flat, dtype=np.int64).reshape(len(etags), 8)
-            tile_elems[tag] = [tuple(int(n) for n in row) for row in conn]
+            rows: list[tuple[int, ...]] = []
+            for gmsh_type, n_nodes in ((_GMSH_QUAD8, 8), (_GMSH_TRI6, 6)):
+                etags, flat = gmsh.model.mesh.getElementsByType(gmsh_type, tag)
+                if len(etags) == 0:
+                    continue
+                conn = np.array(flat, dtype=np.int64).reshape(len(etags), n_nodes)
+                rows.extend(tuple(int(n) for n in row) for row in conn)
+            if rows:
+                tile_elems[tag] = rows
 
         if not tile_elems:
             raise GeometryError(
-                f"no quad8 elements in {step_path}; try a smaller size_mm"
+                f"no shell elements in {step_path}; try a smaller size_mm"
             )
 
         order = sorted(raw_xyz, key=lambda t: (raw_xyz[t][0], raw_xyz[t][1], t))
@@ -205,7 +219,8 @@ def mesh_step(
             for row in rows:
                 mapped = tuple(renumber[n] for n in row)
                 # Element centroid (corners only) vs each shell x-span.
-                cx = sum(nodes[n][0] for n in mapped[:4]) / 4.0
+                corners = _corners(mapped)
+                cx = sum(nodes[n][0] for n in corners) / len(corners)
                 names = {
                     coverages[name]
                     for name, (x0, x1) in ranges.items()
@@ -285,7 +300,7 @@ def mesh_step(
     finally:
         gmsh.finalize()
 
-    return _orient_normals_outward(mesh)
+    return _orient_normals_outward(mesh, quad_floor)
 
 
 def _flip_quad8(conn: tuple[int, ...]) -> tuple[int, ...]:
@@ -294,7 +309,17 @@ def _flip_quad8(conn: tuple[int, ...]) -> tuple[int, ...]:
     return (a, d, c, b, h, g, f, e)
 
 
-def _orient_normals_outward(mesh: Mesh) -> Mesh:
+def _flip_tri6(conn: tuple[int, ...]) -> tuple[int, ...]:
+    """Reverse a 6-node triangle. Midsides follow their edges: 1-2, 2-3, 3-1."""
+    a, b, c, d, e, f = conn
+    return (a, c, b, f, e, d)
+
+
+def _flip(conn: tuple[int, ...]) -> tuple[int, ...]:
+    return _flip_quad8(conn) if len(conn) == 8 else _flip_tri6(conn)
+
+
+def _orient_normals_outward(mesh: Mesh, quad_floor: float = 0.98) -> Mesh:
     """Force shell normals toward +z on the flat skin (first ply = -z face).
 
     Onshape surfaces in this export face -z, so any element with a clear -z
@@ -309,7 +334,7 @@ def _orient_normals_outward(mesh: Mesh) -> Mesh:
     n_flip = 0
     for eid, normal in mesh.element_normals().items():
         if normal[2] < -0.1:
-            flipped[eid] = _flip_quad8(mesh.elements[eid])
+            flipped[eid] = _flip(mesh.elements[eid])
             n_flip += 1
     out = (
         mesh
@@ -324,6 +349,7 @@ def _orient_normals_outward(mesh: Mesh) -> Mesh:
     )
     _check_normals_up(out)
     check_watertight(out, what="STEP mesh")
+    check_quad_fraction(out, quad_floor, what="STEP mesh")
     return out
 
 
