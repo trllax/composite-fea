@@ -38,11 +38,17 @@ add or change a material card, state the units you used in the commit message.
 ```
 src/compfea/
   geometry.py     gmsh API -> planform outline -> quad8 mesh + zone ELSETs -> .inp
+  step_mesh.py    STEP import -> OCC imprint -> ACP-style ply coverage masks
   layup.py        design vector -> *SHELL SECTION, COMPOSITE blocks
   deck.py         assemble complete .inp from templates/base.inp
+  ubend.py        tip-U clamp path -> multi-step NLGEOM deck, angle <-> step
   run.py          subprocess ccx, validate convergence, parse .dat
+  metrics.py      ELSE energy -> secant / tangent moment, linearity deviation
   sweep.py        parameter grid -> process pool -> results.parquet
-  post.py         pandas/seaborn -> SVG
+  post.py         one solve dir -> F(theta) CSV + SVG
+  sweep_post.py   a sweep's results.parquet -> ranked CSV + comparison SVGs
+  frd.py          streaming .frd reader; displacements only
+  shapes.py       planform, target-arc and deformed-shape plots
 templates/base.inp
 cases/
   smoke_cantilever/    32 elements, ~1 s, hand CLPT + closed-form elastica
@@ -172,7 +178,37 @@ A partially converged solve produces a reaction force that looks fine and is
 meaningless. `run.py` raises on failure — it does not return a number. Do not
 add a fallback path that returns the last available increment.
 
-Parse the `.dat` file for reactions. Do not parse `.frd`.
+Parse the `.dat` file for reactions and ELSE energy. Do not take either from
+the `.frd` — the `.dat` is the validated path.
+
+`.frd` is read for **displacements only**, through `frd.py`, and only to draw a
+deformed shape: DISP has no `.dat` route on a solve that is already on disk.
+Four traps if you touch it, none of which announce themselves.
+
+- **Records are fixed width, not whitespace separated.** A negative value runs
+  into the field before it, and so can the node id:
+  ` -1       272 0.00000E+00 0.00000E+00-3.73579E-06`. `.split()` finds four
+  fields where there are five and returns silently wrong numbers.
+- **The field widths depend on the format code**, the trailing integer on the
+  `2C` and `100CL` header lines: 0 is short, 1 is long, 2 is binary. Hardcoding
+  the long widths is the same class of bug as `.split()`.
+- **`-1` is overloaded.** The element block uses it with a different layout
+  (` -1       318    4    0    1`), so a reader keying on the prefix alone reads
+  element ids as coordinates.
+- **The node ids are the expanded solid mesh, not the deck's shell nodes.** ccx
+  expands a composite shell into stacked solids, one layer per ply, so the 32×2
+  strip's 261 planform stations come back as 2484 nodes numbered 265–4176. An
+  frd result can never be joined onto `deck.inp`. Build the shape from the
+  frd's own `2C` coordinate block plus DISP, which is self-consistent.
+
+`*NODE FILE` requested on one step **stays on for every later step**. A deck
+asking for output at 90 and 180 therefore writes DISP at every increment from
+90 onward and none at all below it — which is why a 125 MB frd holds a thousand
+DISP blocks, and why nothing below the first requested angle has a shape. Ask
+`frd.index_disp_blocks` what is actually there rather than assuming an angle was
+written, and stream the file rather than reading it in. `frd.disp_at_step`
+raises if the step it is asked for never reached its end time, rather than
+handing back the last converged increment under the requested angle's name.
 
 Reaction **moments** need a different route: `*NODE PRINT` has no `RM` label,
 `*RIGID BODY` is rejected on shell nodes, and `*SECTION PRINT` silently returns
