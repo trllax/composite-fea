@@ -341,6 +341,31 @@ def _close(a: Point, b: Point, tol: float = 1e-9) -> bool:
 # --------------------------------------------------------------------------
 
 
+# Shell element by connectivity length. Serendipity quad8 -> S8R, and the
+# 6-node triangle -> S6, which ccx accepts in a *SHELL SECTION, COMPOSITE and
+# in the same ELSET as S8R (verified against ccx, not assumed). Triangles are
+# read rather than dropped: deleting one interior element of 128 moved the
+# reported force 2.5%, far more than its 0.8% of area, because it severs load
+# path. A slightly stiff S6 is a much smaller error than a hole.
+_SHELL_TYPE_BY_NODES = {8: "S8R", 6: "S6"}
+
+
+def _corners(conn: tuple[int, ...]) -> tuple[int, ...]:
+    """Corner nodes of a shell element: 4 for a quad8, 3 for a tri6."""
+    n = 4 if len(conn) == 8 else 3
+    return conn[:n]
+
+
+def shell_type(conn: tuple[int, ...]) -> str:
+    try:
+        return _SHELL_TYPE_BY_NODES[len(conn)]
+    except KeyError:
+        raise GeometryError(
+            f"element has {len(conn)} nodes; only quad8 (S8R) and tri6 (S6) "
+            "shells are supported"
+        ) from None
+
+
 @dataclass(frozen=True)
 class Mesh:
     """A quad8 shell mesh, ready to hand to `deck.assemble` as ``mesh_inp``."""
@@ -355,8 +380,10 @@ class Mesh:
         """Unit normal per element, from the corner ordering. Should be ~+z."""
         out = {}
         for eid, conn in self.elements.items():
-            c = [np.array(self.nodes[n]) for n in conn[:4]]
-            normal = np.cross(c[1] - c[0], c[3] - c[0])
+            c = [np.array(self.nodes[n]) for n in _corners(conn)]
+            # Last corner either way: c[3] on a quad, c[2] on a triangle. Both
+            # give the outward normal for counter-clockwise ordering.
+            normal = np.cross(c[1] - c[0], c[-1] - c[0])
             length = float(np.linalg.norm(normal))
             if length == 0.0:
                 raise GeometryError(
@@ -367,14 +394,16 @@ class Mesh:
         return out
 
     def element_areas(self) -> dict[int, float]:
-        """Planform area per element, from the four corners."""
+        """Planform area per element, from its corners."""
         out = {}
         for eid, conn in self.elements.items():
-            c = [np.array(self.nodes[n]) for n in conn[:4]]
-            out[eid] = 0.5 * (
-                np.linalg.norm(np.cross(c[1] - c[0], c[2] - c[0]))
-                + np.linalg.norm(np.cross(c[2] - c[0], c[3] - c[0]))
-            )
+            c = [np.array(self.nodes[n]) for n in _corners(conn)]
+            area = 0.5 * float(np.linalg.norm(np.cross(c[1] - c[0], c[2] - c[0])))
+            if len(c) == 4:
+                area += 0.5 * float(
+                    np.linalg.norm(np.cross(c[2] - c[0], c[3] - c[0]))
+                )
+            out[eid] = area
         return out
 
     def to_inp(self) -> str:
@@ -385,9 +414,16 @@ class Mesh:
         for nid in sorted(self.nodes):
             x, y, z = self.nodes[nid]
             lines.append(f"{nid}, {x:.8f}, {y:.8f}, {z:.8f}")
-        lines.append(f"*ELEMENT, TYPE={_ELEMENT_TYPE}, ELSET=blade")
-        for eid in sorted(self.elements):
-            lines.append(f"{eid}, " + ", ".join(str(n) for n in self.elements[eid]))
+        by_type: dict[str, list[int]] = {}
+        for eid, conn in self.elements.items():
+            by_type.setdefault(shell_type(conn), []).append(eid)
+        # S8R first so an all-quad mesh emits byte-identical text to before.
+        for etype in sorted(by_type, key=lambda t: t != "S8R"):
+            lines.append(f"*ELEMENT, TYPE={etype}, ELSET=blade")
+            for eid in sorted(by_type[etype]):
+                lines.append(
+                    f"{eid}, " + ", ".join(str(n) for n in self.elements[eid])
+                )
         for name, members in self.nsets.items():
             lines.append(f"*NSET, NSET={name}")
             lines.extend(_wrap(members))
@@ -465,6 +501,7 @@ def mesh_outline(
         heading=heading,
     )
     _check_normals(mesh, flat_nodes, camber, span, root_y)
+    check_watertight(mesh, what="meshed outline")
     return mesh
 
 
@@ -620,6 +657,116 @@ def _apply_camber(
         )
         for n, yy, zz in zip(ids, y, z, strict=True)
     }
+
+
+def quad_fraction(mesh: Mesh) -> float:
+    """Share of elements that are quad8. 1.0 for an all-quad mesh."""
+    if not mesh.elements:
+        return 0.0
+    quads = sum(1 for conn in mesh.elements.values() if len(conn) == 8)
+    return quads / len(mesh.elements)
+
+
+def check_quad_fraction(
+    mesh: Mesh, minimum: float = 0.98, *, what: str = "mesh"
+) -> None:
+    """Refuse a mesh that has degenerated into a triangle-dominated one.
+
+    Triangles are read, not dropped, so a few of them cost a little local
+    bending accuracy rather than a hole. That tolerance is not open-ended: S6 is
+    a stiffer, less accurate bending element than S8R, and a mesh that is mostly
+    triangles is a different model than the one this repo validates. Recombine
+    better, or change the size, rather than raising this number.
+    """
+    fraction = quad_fraction(mesh)
+    if fraction < minimum:
+        tris = sum(1 for conn in mesh.elements.values() if len(conn) == 6)
+        raise GeometryError(
+            f"{what} is {fraction:.1%} quad8 ({tris} triangles of "
+            f"{len(mesh.elements)} elements), below the {minimum:.0%} floor. S6 "
+            "is a stiffer bending element than S8R; this many of them changes "
+            "the model. Adjust the mesh size or recombination instead"
+        )
+
+
+def check_watertight(mesh: Mesh, *, what: str = "mesh") -> None:
+    """Refuse a shell mesh with a hole in it.
+
+    Checks the property rather than any particular cause. A quad mesh of one
+    connected sheet has exactly one loop of free edges -- its outline. Every
+    interior edge is shared by exactly two elements. A second loop is a hole.
+
+    This is deliberately not a check on element types. Holes have arrived here
+    from a tile that recombined to quad8 *plus* triangles (only quad8 is read
+    back, so the triangles vanish), and can equally arrive from a tile that
+    meshes to nothing at all, or from a seam where two tiles fail to share
+    nodes. Enumerating those causes is how the first one survived: it was
+    checked only when a tile produced zero quad8, so the mixed case -- the one
+    that actually happened -- was never tested. ccx solves a holed deck without
+    complaint, no node is orphaned by an interior hole, and gmsh's own display
+    is complete because gmsh still has the elements that the deck lost. Nothing
+    downstream notices. So assert the property, once, on the way out.
+
+    An edge shared by three or more elements is non-manifold and is refused for
+    the same reason: it is not a sheet.
+    """
+    from collections import deque
+
+    shared: dict[frozenset[int], int] = {}
+    for conn in mesh.elements.values():
+        corners = _corners(conn)
+        for i in range(len(corners)):
+            edge = frozenset((corners[i], corners[(i + 1) % len(corners)]))
+            shared[edge] = shared.get(edge, 0) + 1
+
+    over = [e for e, n in shared.items() if n > 2]
+    if over:
+        raise GeometryError(
+            f"{what} has {len(over)} edge(s) shared by more than two elements; "
+            "that is not a single shell sheet"
+        )
+
+    adjacent: dict[int, set[int]] = {}
+    for edge, count in shared.items():
+        if count == 1:
+            a, b = tuple(edge)
+            adjacent.setdefault(a, set()).add(b)
+            adjacent.setdefault(b, set()).add(a)
+    if not adjacent:
+        raise GeometryError(f"{what} has no free edges at all; it has no outline")
+
+    seen: set[int] = set()
+    loops: list[list[int]] = []
+    for start in adjacent:
+        if start in seen:
+            continue
+        queue = deque([start])
+        seen.add(start)
+        loop = []
+        while queue:
+            node = queue.popleft()
+            loop.append(node)
+            for other in adjacent[node]:
+                if other not in seen:
+                    seen.add(other)
+                    queue.append(other)
+        loops.append(loop)
+
+    if len(loops) > 1:
+        interior = sorted(loops, key=len)[:-1]
+        where = []
+        for loop in interior[:3]:
+            xs = [mesh.nodes[n][0] for n in loop]
+            ys = [mesh.nodes[n][1] for n in loop]
+            where.append(
+                f"{len(loop)} nodes near x={sum(xs) / len(xs):.1f}, "
+                f"y={sum(ys) / len(ys):.1f}"
+            )
+        raise GeometryError(
+            f"{what} has {len(loops) - 1} hole(s): free edges form {len(loops)} "
+            f"loops, not one outline ({'; '.join(where)}). Elements are missing "
+            "from the sheet -- ccx would solve the holed part without complaint"
+        )
 
 
 def _zone_elsets(

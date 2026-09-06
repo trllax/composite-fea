@@ -18,9 +18,11 @@ import pytest
 
 from compfea.deck import StaticStep, assemble
 from compfea.geometry import (
+    check_watertight,
     CircularCamber,
     CurvatureProfile,
     GeometryError,
+    Mesh,
     Outline,
     mesh_outline,
 )
@@ -574,3 +576,80 @@ def test_a_curved_blade_solves_and_is_not_the_flat_one(curved_reactions):
     """
     ratio = curved_reactions["curved"] / curved_reactions["flat"]
     assert ratio > 1.05
+
+
+# --- holes ------------------------------------------------------------------
+# A hole reaches the deck whenever elements go missing between gmsh and the
+# .inp: a tile that recombined to quad8 plus triangles (only quad8 is read
+# back), a tile that meshed to nothing, or a seam whose nodes are not shared.
+# Checking those causes one at a time is how the first one survived. These pin
+# the property instead.
+
+
+def _interior_elements(mesh):
+    from collections import Counter
+
+    shared = Counter()
+    for conn in mesh.elements.values():
+        q = conn[:4]
+        for i in range(4):
+            shared[frozenset((q[i], q[(i + 1) % 4]))] += 1
+    return [
+        eid
+        for eid, conn in mesh.elements.items()
+        if all(
+            shared[frozenset((conn[:4][i], conn[:4][(i + 1) % 4]))] == 2
+            for i in range(4)
+        )
+    ]
+
+
+def _strip():
+    return mesh_outline(Outline.rectangle(chord=20.0, span=100.0), n_chord=4, n_span=8)
+
+
+def test_a_sound_mesh_is_watertight():
+    check_watertight(_strip())
+
+
+def test_a_missing_interior_element_is_caught():
+    mesh = _strip()
+    victim = _interior_elements(mesh)[0]
+    holed = Mesh(
+        nodes=mesh.nodes,
+        elements={k: v for k, v in mesh.elements.items() if k != victim},
+        nsets=mesh.nsets,
+        elsets=mesh.elsets,
+        heading=mesh.heading,
+    )
+    with pytest.raises(GeometryError, match="hole"):
+        check_watertight(holed)
+
+
+def test_counting_orphan_nodes_would_not_have_caught_it():
+    """Why the check is on free edges and not on nodes.
+
+    An interior element shares every one of its nodes with a neighbour, so
+    deleting it orphans nothing. A node-based check reports a clean mesh.
+    """
+    mesh = _strip()
+    victim = _interior_elements(mesh)[0]
+    remaining = {k: v for k, v in mesh.elements.items() if k != victim}
+    used = {n for conn in remaining.values() for n in conn}
+    assert set(mesh.nodes) - used == set()
+
+
+def test_a_non_manifold_edge_is_caught():
+    mesh = _strip()
+    doubled = dict(mesh.elements)
+    doubled[max(doubled) + 1] = mesh.elements[_interior_elements(mesh)[0]]
+    with pytest.raises(GeometryError, match="more than two elements"):
+        check_watertight(
+            Mesh(
+                nodes=mesh.nodes,
+                elements=doubled,
+                nsets=mesh.nsets,
+                elsets=mesh.elsets,
+                heading=mesh.heading,
+            )
+        )

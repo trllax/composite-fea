@@ -43,6 +43,11 @@ _TOTAL_HEADER = re.compile(
     r"^\s*total force \(fx,fy,fz\) for set (?P<nset>\S+) and time\s+(?P<time>\S+)\s*$"
 )
 
+_ENERGY_HEADER = re.compile(
+    r"^\s*total internal energy for set (?P<elset>\S+) and time\s+(?P<time>\S+)\s*$"
+)
+_ENERGY_COLUMNS = ("increment", "time", "elset", "energy")
+
 
 class SolveError(RuntimeError):
     """Base for every way a solve fails to produce a usable result."""
@@ -167,6 +172,54 @@ def parse_dat_totals(path: str | Path) -> pd.DataFrame:
     return frame[list(_REACTION_COLUMNS)]
 
 
+
+def parse_dat_energy(path: str | Path) -> pd.DataFrame:
+    """Parse ``*EL PRINT, TOTALS=ONLY`` internal-energy blocks from a ``.dat``.
+
+    One row per printed elset per time. Elset names are lower-cased to match
+    ``parse_dat_totals``. The value is the single scalar on the next non-blank
+    line after the header (CalculiX ELSE total).
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise SolveError(f"ccx wrote no results file at {path}")
+    lines = path.read_text().splitlines()
+    rows = []
+    for i, line in enumerate(lines):
+        header = _ENERGY_HEADER.match(line)
+        if header is None:
+            continue
+        energy = _energy_after(lines, i + 1, path)
+        rows.append(
+            {
+                "time": float(header["time"]),
+                "elset": header["elset"].lower(),
+                "energy": energy,
+            }
+        )
+    if not rows:
+        raise SolveError(
+            f"no internal-energy totals in {path}; the deck needs "
+            f"*EL PRINT, ELSET=..., TOTALS=ONLY with ELSE"
+        )
+    frame = pd.DataFrame(rows)
+    frame.insert(0, "increment", frame["time"].rank(method="dense").astype(int))
+    return frame[list(_ENERGY_COLUMNS)]
+
+
+def _energy_after(lines: list[str], start: int, path: Path) -> float:
+    """The scalar energy on the first non-blank line after a header."""
+    for line in lines[start : start + 3]:
+        fields = line.split()
+        if not fields:
+            continue
+        try:
+            return float(fields[0])
+        except ValueError:
+            break
+    raise SolveError(f"malformed internal-energy block at line {start} of {path}")
+
+
 def _totals_after(
     lines: list[str], start: int, path: Path
 ) -> tuple[float, float, float]:
@@ -193,13 +246,15 @@ def solve(
     ccx: str = "ccx",
     timeout_s: float = 1800.0,
     final_time: float = _DEFAULT_FINAL_TIME,
+    threads: int = 1,
 ) -> SolveResult:
     """Solve ``inp_path`` in its own directory and return the converged result.
 
     The deck is copied into ``run_dir`` as ``<job_name>.inp`` and solved there,
     so concurrent sweep jobs cannot collide on ccx's job-derived scratch file
-    names. Each solve is single-threaded on purpose: parallelism belongs at the
-    sweep level, not inside one solve.
+    names. ``threads`` sets ``OMP_NUM_THREADS`` for this solve (default 1).
+    Sweeps should keep threads=1 per job and parallelize across designs;
+    single interactive runs may raise this (SPOOLES scaling is limited).
 
     ``final_time`` is the total time the analysis must reach to count as
     converged. It defaults to 1.0, matching the single-step load-case template,
@@ -227,7 +282,9 @@ def solve(
     if inp_path.resolve() != deck.resolve():
         shutil.copyfile(inp_path, deck)
 
-    env = {**os.environ, "OMP_NUM_THREADS": "1"}
+    if threads < 1:
+        raise ValueError(f"threads must be >= 1, got {threads}")
+    env = {**os.environ, "OMP_NUM_THREADS": str(threads)}
     started = time.monotonic()
     try:
         completed = subprocess.run(

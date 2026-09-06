@@ -90,8 +90,13 @@ class EngineeringConstants:
         )
 
 
-# Placeholder UD CFRP used in strip cases (MPa, tonne/mm^3).
-PLACEHOLDER_CFRP = EngineeringConstants(
+# Generic UD carbon/epoxy. Units are MPa and tonne/mm^3 per CLAUDE.md.
+#
+# These are textbook-typical values for a T300-class UD lamina. They are NOT a
+# datasheet for any real prepreg and they are NOT fitted to the measurement in
+# cases/fin_20n. An absolute force from a sweep run on this material is
+# indicative of a trend, not a prediction of a bench number.
+UD_CFRP_GENERIC = EngineeringConstants(
     e1=135000.0,
     e2=9000.0,
     e3=9000.0,
@@ -101,16 +106,104 @@ PLACEHOLDER_CFRP = EngineeringConstants(
     g12=4500.0,
     g13=4500.0,
     g23=3000.0,
+    name="cfrp",
 )
+
+# Former name. Kept so existing callers keep resolving; prefer the explicit one.
+PLACEHOLDER_CFRP = UD_CFRP_GENERIC
+
+
+def _plane_stress_q(ec: EngineeringConstants) -> tuple[float, float, float, float]:
+    """Reduced stiffnesses (Q11, Q12, Q22, Q66) of one lamina, MPa.
+
+    Plane stress in the 1-2 plane, which is what a shell laminate sees.
+    """
+    nu21 = ec.nu12 * ec.e2 / ec.e1
+    denom = 1.0 - ec.nu12 * nu21
+    if denom <= 0.0:
+        raise ValueError(
+            f"material {ec.name!r} has 1 - nu12*nu21 = {denom:g}; the lamina "
+            "compliance is not positive definite and Q would flip sign"
+        )
+    return ec.e1 / denom, ec.nu12 * ec.e2 / denom, ec.e2 / denom, ec.g12
+
+
+def woven_from_ud(
+    ud: EngineeringConstants,
+    *,
+    crimp_factor: float = 1.0,
+    name: str = "cfrp_woven",
+) -> EngineeringConstants:
+    """A balanced woven lamina derived from a UD one. Nothing here is guessed.
+
+    The in-plane constants come from **A-matrix (membrane) equivalence** to a
+    ``[0/90]`` pair of ``ud`` at half thickness each: average the reduced
+    stiffnesses of the 0 and 90 plies, then invert back to engineering
+    constants. That pins ``e1 == e2``, ``nu12`` and ``g12`` exactly -- they are
+    derived, not chosen.
+
+    Read the equivalence narrowly. It is a *membrane* identity:
+
+    - ``A`` matches a ``[0/90]`` UD pair of the same total thickness, always.
+    - ``B`` does not. The weave is balanced so ``B == 0``; an unsymmetric UD
+      pair has ``B != 0``.
+    - ``D`` matches only for an interleaved ``[0/90]_n`` stack, where the two
+      fibre directions sit at the same mean radius. For the **symmetric**
+      ``[0/90]_ns`` stacks that ``sweep.py`` builds, the UD version clusters
+      like plies at the outer fibre and its ``D11`` is far higher -- 66% at
+      n=2, 33% at n=3. This is a bending problem, so that gap is the entire
+      physical content of a UD-vs-woven sweep. It is not a relabeling.
+
+    The out-of-plane constants are not pinned by membrane equivalence. They are
+    set by the 1<->2 symmetry a balanced weave must have, using one rule
+    throughout: every out-of-plane pair is averaged across the 0 and 90 plies.
+    So ``e3`` is unchanged, ``g13 == g23 == mean(ud.g13, ud.g23)``, and
+    ``nu13 == nu23 == mean(ud.nu13, ud.nu23)`` -- half the tows run along the
+    load and half across it, so both contribute. Stated, not fitted; averaging
+    Poisson ratios directly is not rigorous, but taking ``nu13`` from
+    ``ud.nu12`` while the shear moduli were averaged would put an in-plane
+    ratio in an out-of-plane slot on any card where the two differ.
+
+    ``crimp_factor`` scales the in-plane moduli only, to stand in for the
+    stiffness a real weave loses to fibre undulation. It defaults to ``1.0``:
+    no knockdown, pure equivalence, no invented number.
+    """
+    if not 0.0 < crimp_factor <= 1.0:
+        raise ValueError(f"crimp_factor must lie in (0, 1], got {crimp_factor!r}")
+    q11, q12, q22, q66 = _plane_stress_q(ud)
+    q_bal = 0.5 * (q11 + q22)
+    nu = q12 / q_bal
+    e_bal = q_bal * (1.0 - nu * nu)
+    g_out = 0.5 * (ud.g13 + ud.g23)
+    nu_out = 0.5 * (ud.nu13 + ud.nu23)
+    return EngineeringConstants(
+        e1=e_bal * crimp_factor,
+        e2=e_bal * crimp_factor,
+        e3=ud.e3,
+        nu12=nu,
+        nu13=nu_out,
+        nu23=nu_out,
+        g12=q66 * crimp_factor,
+        g13=g_out,
+        g23=g_out,
+        density=ud.density,
+        name=name,
+    )
 
 
 @dataclass(frozen=True)
 class Ply:
-    """One lamina. ``angle_deg`` is fiber angle about the shell normal."""
+    """One lamina. ``angle_deg`` is fiber angle about the shell normal.
+
+    ``coverage`` is an ACP-style mask name (a mesh ELSET). ``None`` means the
+    ply is present on every element. Overlapping coverages are resolved by
+    ``layup_from_coverage`` into exclusive COMPOSITE ELSETs.
+    """
 
     thickness: float
     angle_deg: float
     material: str = "cfrp"
+    coverage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -232,7 +325,10 @@ class Layup:
         material: EngineeringConstants = PLACEHOLDER_CFRP,
     ) -> Layup:
         """Single-zone layup (one ELSET, one material library entry)."""
-        fixed = tuple(Ply(p.thickness, p.angle_deg, material.name) for p in plies)
+        fixed = tuple(
+            Ply(p.thickness, p.angle_deg, material.name, p.coverage)
+            for p in plies
+        )
         return cls(
             materials=(material,),
             zones=(ZoneLayup(elset, fixed),),
@@ -268,6 +364,123 @@ class Layup:
                 lines.append(f"{ply.thickness}, , {ply.material}, {ori}")
             blocks.append("\n".join(lines))
         return "\n".join(blocks)
+
+
+
+def coverages_from_mesh(
+    elsets: dict[str, tuple[int, ...]],
+    *,
+    skip: frozenset[str] | set[str] = frozenset({"blade"}),
+) -> dict[int, frozenset[str]]:
+    """Invert overlapping coverage ELSETs -> element id to frozenset of names.
+
+    ``blade`` (and any name in ``skip``) is ignored: it is the whole part, not
+    a ply mask.
+    """
+    inv: dict[int, set[str]] = {}
+    for name, eids in elsets.items():
+        if name in skip:
+            continue
+        for eid in eids:
+            inv.setdefault(eid, set()).add(name)
+    if not inv:
+        raise ValueError("no coverage ELSETs found (only skipped names?)")
+    return {eid: frozenset(names) for eid, names in inv.items()}
+
+
+def _stack_for_element(
+    plies: tuple[Ply, ...], masks: frozenset[str]
+) -> tuple[Ply, ...]:
+    """Plies that apply at an element, bottom -> top."""
+    return tuple(
+        ply
+        for ply in plies
+        if ply.coverage is None or ply.coverage in masks
+    )
+
+
+def layup_from_coverage(
+    plies: list[Ply] | tuple[Ply, ...],
+    element_coverages: dict[int, frozenset[str]],
+    *,
+    long_axis: str,
+    material: EngineeringConstants = PLACEHOLDER_CFRP,
+) -> tuple[Layup, dict[str, tuple[int, ...]]]:
+    """Expand ACP-style covered plies into exclusive COMPOSITE zones.
+
+    Each element gets the subsequence of ``plies`` whose ``coverage`` is ``None``
+    or listed in that element's masks. Elements that share the same resulting
+    stack share one ELSET (``cov_1``, ``cov_2``, ...). Returns the ``Layup`` and
+    the exclusive elset membership map to merge onto the mesh.
+    """
+    if not plies:
+        raise ValueError("at least one ply is required")
+    if not element_coverages:
+        raise ValueError("element_coverages is empty")
+
+    known_masks = set().union(*element_coverages.values())
+    for ply in plies:
+        if ply.coverage is not None and ply.coverage not in known_masks:
+            raise ValueError(
+                f"ply coverage {ply.coverage!r} not in mesh masks "
+                f"{sorted(known_masks)}"
+            )
+
+    # Map default "cfrp" onto the library material name (same as Layup.uniform).
+    fixed_plies = tuple(
+        Ply(
+            p.thickness,
+            p.angle_deg,
+            material.name if p.material == "cfrp" else p.material,
+            p.coverage,
+        )
+        for p in plies
+    )
+
+    groups: dict[tuple[tuple[float, float, str], ...], list[int]] = {}
+    stack_plies: dict[tuple[tuple[float, float, str], ...], tuple[Ply, ...]] = {}
+    for eid in sorted(element_coverages):
+        applied = _stack_for_element(fixed_plies, element_coverages[eid])
+        if not applied:
+            raise ValueError(
+                f"element {eid} matches no plies; every element needs a stack"
+            )
+        key = tuple(
+            (p.thickness, canonical_angle(p.angle_deg), p.material) for p in applied
+        )
+        groups.setdefault(key, []).append(eid)
+        stack_plies[key] = applied
+
+    zones: list[ZoneLayup] = []
+    elsets: dict[str, tuple[int, ...]] = {}
+    for index, key in enumerate(groups, start=1):
+        name = f"cov_{index}"
+        zones.append(ZoneLayup(name, stack_plies[key]))
+        elsets[name] = tuple(sorted(groups[key]))
+
+    covered = set().union(*(set(v) for v in elsets.values()))
+    if covered != set(element_coverages):
+        raise ValueError(
+            f"coverage layup assigned {len(covered)} of "
+            f"{len(element_coverages)} elements"
+        )
+
+    layup = Layup(materials=(material,), zones=tuple(zones), long_axis=long_axis)
+    return layup, elsets
+
+
+def mesh_elsets_for_stacks(
+    exclusive_stacks: dict[str, tuple[int, ...]],
+    *,
+    all_elements: tuple[int, ...] | list[int],
+) -> dict[str, tuple[int, ...]]:
+    """``blade`` plus exclusive ``cov_*`` ELSETs for ``Mesh.elsets``."""
+    blade = tuple(sorted(all_elements))
+    assigned = set().union(*(set(v) for v in exclusive_stacks.values()))
+    if assigned != set(blade):
+        raise ValueError("stack ELSETs must partition blade")
+    return {"blade": blade, **exclusive_stacks}
+
 
 
 def cross_ply_symmetric(
