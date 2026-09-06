@@ -153,3 +153,50 @@ tail -n 40 results/<run_id>/sweep.log
 
 Results: `results/<run_id>/results.csv` (and `.parquet`) with `f_90`, `f_180`,
 `f_ratio_180_90`, `max_linearity_dev`, and the per-design identity columns.
+
+## Reading the results
+
+`sweep.py` writes the table; `compfea-sweep-post` turns it into a ranking.
+
+```bash
+compfea-sweep-post <run_id>              # ranked CSV + figures in results/<run_id>/
+compfea-sweep-post <run_id> --shapes 3   # also plot the top 3 deformed shapes
+```
+
+| file | what it is |
+| --- | --- |
+| `sweep_post_rank.csv` | every solved design, sorted by `f_180`, with the linearity columns and a `suspect_f_<deg>` flag beside each force |
+| `sweep_post_rank.svg` | one panel per reported angle; a dot at `F` with a whisker of `|linearity_dev| * F` |
+| `sweep_post_ratio_check.svg` | `f_180` against `f_90` with the `y = 2x` the model predicts — diagnostic only |
+| `sweep_post.json` | mode, counts, varying axes, missing columns, best/worst, and every failed design's error string |
+| `sweep_post_shape_<cache_key>.svg` | solved mid-surface against the arc the tip was driven along |
+
+The whisker is the secant-vs-tangent disagreement expressed in the units of the
+objective, so it can be read against the gaps between designs: two designs whose
+whiskers cover each other's dot are not separable by this sweep. The panel title
+names the angle the deviation was actually measured at — on the default
+5-degree path the `f_180` value comes from 175, for the endpoint reason above.
+
+### Modes
+
+The tool refuses to present a run as something it is not.
+
+- **calibration** — every design column is constant and only `static_line`
+  varies. That is a solver-increment study, not a design comparison, so no
+  ranking figure is written. `results/incr-calib` is one: five settings, forces
+  identical to the last digit, and the coarsest is 5.4x faster than the finest.
+- **single** — one solved design, nothing to compare.
+- **design** — everything else.
+
+### Shapes come from the `.frd`, and only from 90 degrees up
+
+`--shapes N` reads DISP out of each design's cached `job.frd`. `build_deck`
+asks for `*NODE FILE` at 90 and 180 only, and ccx carries that request forward
+once made, so **there is no DISP below 90 degrees at all** and an angle without
+one is skipped rather than filled in from a neighbour. These files run 15-130 MB
+each, which is why `--shapes` is off by default.
+
+On a spanwise-uniform layup the designs bend into the *same* shape and differ
+only in the force needed — stiffness scales `F`, not the deflected curve. The
+shape comparison earns its keep on zoned designs, where a ply drop moves
+curvature outboard.
