@@ -151,13 +151,26 @@ def is_symmetric(b: np.ndarray, a: np.ndarray) -> bool:
     return bool(np.max(np.abs(b)) <= COUPLING_REL_TOL * max(np.max(np.abs(a)), 1e-300))
 
 
-def is_balanced(zone: ZoneLayup) -> bool:
+def is_balanced(zone: ZoneLayup, kinds: dict[str, str] | None = None) -> bool:
     """Every ``+theta`` has a matching ``-theta`` of equal thickness.
 
-    0 and 90 are their own opposites and never unbalance a stack.
+    Two kinds of ply never unbalance a stack:
+
+    - 0 and 90 degree plies, which are their own negation.
+    - **Any woven ply.** A woven lamina at ``theta`` carries warp tows at
+      ``theta`` and fill tows at ``theta + 90``, so a single woven +45 ply is
+      already balanced -- there is no such thing as a lone +45 weave needing a
+      -45 partner. Without ``kinds`` every ply is assumed UD, which reports a
+      perfectly good woven-skinned laminate as unbalanced.
+
+    ``kinds`` maps material name -> ``"ud"`` or ``"woven"``; build it from a
+    ``materials`` library.
     """
+    kinds = kinds or {}
     net: dict[float, float] = {}
     for ply in zone.plies:
+        if kinds.get(ply.material, "ud") == "woven":
+            continue
         angle = canonical_angle(ply.angle_deg)
         if angle in (0.0, 90.0, -90.0):
             continue
@@ -167,11 +180,16 @@ def is_balanced(zone: ZoneLayup) -> bool:
     return all(abs(v) <= 1e-12 for v in net.values())
 
 
-def laminate_summary(layup: Layup) -> list[dict[str, object]]:
+def laminate_summary(
+    layup: Layup, kinds: dict[str, str] | None = None
+) -> list[dict[str, object]]:
     """One row per zone: thickness, A/B/D terms, flags -- the ACP comparison.
 
     Flat keys rather than nested matrices so this drops straight into a CSV and
     a dataframe. ``a11`` .. ``d66`` are the six independent terms of each 3x3.
+
+    ``kinds`` maps material name -> ``"ud"``/``"woven"`` and only affects the
+    ``balanced`` flag; see ``is_balanced``. Omit it and every ply counts as UD.
     """
     materials = {m.name: m for m in layup.materials}
     rows: list[dict[str, object]] = []
@@ -185,7 +203,7 @@ def laminate_summary(layup: Layup) -> list[dict[str, object]]:
             "thickness_mm": thickness,
             "stack": "[" + "/".join(f"{p.angle_deg:g}" for p in zone.plies) + "]",
             "symmetric": is_symmetric(b, a),
-            "balanced": is_balanced(zone),
+            "balanced": is_balanced(zone, kinds),
             "bend_twist_sign": bend_twist_sign(d),
             "ef_x_mpa": ef_x,
             "ef_y_mpa": ef_y,

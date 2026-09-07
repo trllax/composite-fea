@@ -33,14 +33,20 @@ Density is therefore in tonne/mm^3 (CFRP ~1.6e-9, not 1600).
 A wrong unit here produces a plausible-looking number, not an error. If you
 add or change a material card, state the units you used in the commit message.
 
+Material data authored as a file goes through `materials.py`, which makes the
+units explicit rather than conventional: every `materials/*.csv` carries a
+`# units:` line and a file without one is refused. Convert by declaring, not by
+hand — a hand-converted file that still says `stress=Pa` is exactly the failure
+this is here to stop.
+
 ## Layout
 
 ```
 src/compfea/
   geometry.py     gmsh API -> planform outline -> quad8 mesh + zone ELSETs -> .inp
-  step_mesh.py    STEP import -> OCC imprint -> ACP-style ply coverage masks
+  step_mesh.py    STEP import -> OCC imprint -> exact ACP-style zone masks
   layup.py        design vector -> *SHELL SECTION, COMPOSITE blocks
-  deck.py         assemble complete .inp from templates/base.inp
+  deck.py         assemble a complete .inp (all strings; there is no template)
   ubend.py        tip-U clamp path -> multi-step NLGEOM deck, angle <-> step
   run.py          subprocess ccx, validate convergence, parse .dat
   metrics.py      ELSE energy -> secant / tangent moment, linearity deviation
@@ -49,8 +55,14 @@ src/compfea/
   sweep_post.py   a sweep's results.parquet -> ranked CSV + comparison SVGs
   frd.py          streaming .frd reader; displacements only
   shapes.py       planform, target-arc and deformed-shape plots
-templates/base.inp
+  stress.py       .dat ply stresses un-rotated into the material frame
+  materials.py    materials CSV -> lamina cards; units declared, then checked
+  plybook.py      ply-book CSV -> a Layup bound to the mesh's named zones
+  abd.py          CLPT A/B/D per zone; the pre-solve cross-check against ACP
+  build.py        compfea-build: STEP + ply book + materials -> deck + reports
+materials/        generic.csv (the shipped cards) + an empty ANSYS template
 cases/
+  fin_zoned/           the design front door on a real STEP
   smoke_cantilever/    32 elements, ~1 s, hand CLPT + closed-form elastica
   fin_20n/             freediving fin, pinned to a physical measurement
 results/               gitignored
@@ -87,7 +99,30 @@ tests/
   *SHELL SECTION, COMPOSITE, ELSET=zone_a
   0.25, , cfrp, ori_p45
   ```
-- Material is `*ELASTIC, TYPE=ENGINEERING CONSTANTS` (9 constants).
+- Material is `*ELASTIC, TYPE=ENGINEERING CONSTANTS` (9 constants). A library
+  lives in `materials/*.csv` and is read by `materials.py`, which **refuses a
+  file that does not declare its units**. That is not ceremony: ANSYS exports Pa
+  and kg/m^3, this repo needs MPa and tonne/mm^3, and ccx will not object to
+  either. It also refuses a thermodynamically inadmissible card, which ccx
+  solves without complaint, and warns when a Poisson ratio looks like the minor
+  one in the major slot.
+- A real layup comes from a **ply book**: one CSV row per ply, in global
+  stacking order, each naming the zone it covers. Ply 1 is the -z ply. An
+  element's stack is the subsequence of plies covering it, so a drop is a
+  subsequence and ply continuity across a zone boundary holds by construction --
+  which is why it is a ply book and not one stack per zone.
+- `abd.py` reports A, B and D per zone with no solver. Run it before comparing
+  anything to ANSYS: it establishes that both codes were handed the same
+  laminate. **`D16` is the only quantity in this repo that can catch a mirrored
+  angle convention** -- see the note on `*ORIENTATION` above, which is otherwise
+  invisible to every force check here.
+- Zone ELSETs from a STEP come from the **OCC fragment map**, not from geometry
+  matching: each named shell's faces are followed to the tiles they became, so
+  membership carries no tolerance at all. It used to be a centroid-in-x-range
+  test, which gave two of this repo's own zones identical ELSETs and made a
+  third 2.5x too large. `zone_report()` prints each zone's area against the CAD
+  -- look at it before spending a solve. `cases/step_fin/README.md` records the
+  measurements, including one check that looks rigorous and is a tautology.
 - Meshes come from `geometry.py` (gmsh). Four things there are load-bearing and
   none of them announce themselves:
   - **quad8 is gmsh element type 16**, not 10. Type 10 is the 9-node quad, and it

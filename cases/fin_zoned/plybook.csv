@@ -1,0 +1,36 @@
+# Freediving fin blade, zoned. Span along +x; a 0-degree ply runs root to tip.
+#
+# ply 1 is the -z ply -- the first line of the *SHELL SECTION, COMPOSITE card,
+# and the face the element normal points away from. Reversing this file is not
+# a no-op: it leaves D unchanged and flips B, so the blade bends the same and
+# draws in the other way.
+#
+# Zones are the sanitized names of the STEP's named shells, nested root to tip:
+#   HEAL (0-173) < QUARTER (0-300) < HALF (0-450) < z_3_4ths (0-700) < FULL
+#   TIP (975-1175) sits outboard on its own.
+# A ply covers its zone, so an inboard zone carries every ply that names it or
+# any zone containing it. Read down the file to see the stack at the root; read
+# only the FULL rows to see the stack at 800 mm.
+#
+# Every zone's stack is symmetric about its own mid-plane, so no zone warps
+# flat, and every UD off-axis ply is paired with its negation in the same zone,
+# so no zone twists under bend. The woven skins need no partner: a woven ply at
+# 45 carries tows at 45 and 135 and is balanced on its own.
+#
+# Drops go under the skin -- plies 1, 2, 13, 14 run everywhere, so the outer
+# surface is continuous and every drop is buried.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,cfrp_woven,45,0.20,woven
+2,FULL,cfrp,0,0.15,ud
+3,z_3_4ths,cfrp,0,0.15,ud
+4,HALF,cfrp,45,0.15,ud
+5,HALF,cfrp,-45,0.15,ud
+6,QUARTER,cfrp,0,0.20,ud
+7,HEAL,cfrp,0,0.30,ud
+8,QUARTER,cfrp,0,0.20,ud
+9,HALF,cfrp,-45,0.15,ud
+10,HALF,cfrp,45,0.15,ud
+11,z_3_4ths,cfrp,0,0.15,ud
+12,TIP,cfrp,0,0.10,ud
+13,FULL,cfrp,0,0.15,ud
+14,FULL,cfrp_woven,45,0.20,woven

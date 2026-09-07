@@ -282,3 +282,34 @@ def test_flexural_modulus_of_a_single_ply_is_its_own_modulus():
     )
     row = laminate_summary(layup)[0]
     assert row["ef_x_mpa"] == pytest.approx(135000.0, rel=1e-6)
+
+
+def test_a_woven_ply_is_balanced_on_its_own():
+    """A woven +45 carries tows at 45 and 135; it needs no -45 partner.
+
+    Without this, a woven-skinned laminate -- the shape cases/fin_zoned
+    actually uses -- reports as unbalanced, which is wrong and would send
+    somebody looking for a ply that should not exist.
+    """
+    stack = ZoneLayup("skin", (Ply(0.2, 45.0, "cfrp_woven"), Ply(0.2, 45.0, "cfrp")))
+    assert not is_balanced(stack)                       # no kinds: all UD
+    assert not is_balanced(stack, {"cfrp_woven": "woven"})   # the ud +45 is lone
+    two_woven = ZoneLayup(
+        "skin", (Ply(0.2, 45.0, "cfrp_woven"), Ply(0.2, 45.0, "cfrp_woven"))
+    )
+    assert not is_balanced(two_woven)
+    assert is_balanced(two_woven, {"cfrp_woven": "woven"})
+
+
+def test_kinds_only_moves_the_balanced_flag_not_the_stiffness():
+    """Weave balance is bookkeeping; A, B and D come from the cards alone."""
+    layup = Layup(
+        materials=(UD_CFRP_GENERIC,),
+        zones=(zone([45, 45, 45, 45]),),
+        long_axis="x",
+    )
+    plain = laminate_summary(layup)[0]
+    woven = laminate_summary(layup, {"cfrp": "woven"})[0]
+    assert plain["balanced"] is False and woven["balanced"] is True
+    for key in ("a11", "b11", "d11", "d16", "ef_x_mpa"):
+        assert plain[key] == pytest.approx(woven[key], rel=1e-15)
