@@ -1,0 +1,17 @@
+# The ply book form of cases/step_fin/run_ubend.py default_plies().
+#
+# It exists to be compared, not edited: tests/test_plybook.py asserts that the
+# deck built from this file is byte-identical to the deck built from the Python
+# literal. That single assertion covers the loader, the zone binding, the
+# material resolution and the ply ordering at once, against a layup this repo
+# already solves.
+#
+# ply 1 is the -z ply -- the first line of the *SHELL SECTION, COMPOSITE card.
+# Zone names are the sanitized mesh ELSETs, so 3_4ths is written z_3_4ths.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,cfrp,0,0.15,ud
+2,FULL,cfrp,90,0.15,ud
+3,z_3_4ths,cfrp,0,0.10,ud
+4,HALF,cfrp,90,0.10,ud
+5,TIP,cfrp,0,0.20,ud
+6,HEAL,cfrp,45,0.25,ud
