@@ -106,10 +106,37 @@ that can.
 Only then compare solved quantities — `F_90`/`F_180` from ELSE energy, and the
 per-ply peaks from `compfea.stress`.
 
+## Does the deck solve?
+
+Yes. A smoke run — 5 steps of 1 degree, `0.001, 1.0, 1.E-10, 0.1`, one core —
+reaches TOT TIME 5.0 and exits clean, so both of `CLAUDE.md`'s validity
+conditions hold. **This is the first deck in this repo to carry two
+`*MATERIAL` cards**, and ccx takes six `*SHELL SECTION, COMPOSITE` blocks over
+one `blade` ELSET without complaint.
+
+| theta | U (N·mm) | M = 2U/theta (N·mm) | F = M/arm (N) |
+| --- | --- | --- | --- |
+| 1° | 3.462e-1 | 39.68 | 0.0396 |
+| 2° | 1.472e+0 | 84.33 | 0.0841 |
+| 3° | 3.390e+0 | 129.50 | 0.1292 |
+| 4° | 6.110e+0 | 175.05 | 0.1747 |
+| 5° | 9.634e+0 | 220.79 | 0.2203 |
+
+Arm 1002.26 mm (tip minus the outboard `HEAL` station). `M` increments by
+44.7, 45.2, 45.6, 45.7 — near-linear with about 11% geometric stiffening from
+1° to 5°, which is what early large-deflection behaviour looks like.
+
+**These are not validated forces.** 5 degrees is the start of a 180-degree
+path, the material is `materials/generic.csv` — textbook constants, explicitly
+not a datasheet — and nothing here is pinned to a measurement. The number the
+run establishes is that the deck is well formed and converges, not what the fin
+does.
+
 ## Not done here
 
-`compfea-build` does not solve. The U-bend path exists in
-`cases/step_fin/run_ubend.py`, and this case has not been run through it, so
-there is no force on this page — a number here would be one nobody checked.
-The fin also needs its own solver increments (`FIN_STATIC_LINE`); the strip's
-calibrated cap diverges on this geometry.
+`compfea-build` does not solve; the U-bend path lives in
+`cases/step_fin/run_ubend.py` and this case is not wired to it. The full
+180-degree run also needs the fin's own increments (`FIN_STATIC_LINE`) — the
+strip's calibrated cap diverges on this geometry — and it is much heavier than
+the smoke run above, because ccx expands each S8R into one solid per ply and
+the root zone here is 13 plies deep.
