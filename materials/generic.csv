@@ -1,0 +1,12 @@
+# units: stress=MPa density=tonne/mm3
+#
+# The two cards this repo already had, written out so they can be loaded
+# like any other library. Generated from layup.UD_CFRP_GENERIC and
+# layup.woven_from_ud -- tests/test_materials.py asserts the round trip,
+# so this file cannot drift away from those constants.
+#
+# Allowables are blank: these are textbook stiffnesses, not a datasheet,
+# and there is no strength data to put here that would not be invented.
+name,kind,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,xt,xc,yt,yc,s12,source
+cfrp,ud,135000.0,9000.0,9000.0,0.3,0.3,0.45,4500.0,4500.0,3000.0,1.6e-09,,,,,,"Textbook T300-class UD carbon/epoxy. NOT a datasheet for any real prepreg and NOT fitted to cases/fin_20n. Trends, not predictions."
+cfrp_woven,woven,72332.74647887323,72332.74647887323,9000.0,0.037500000000000006,0.375,0.375,4500.0,3750.0,3750.0,1.6e-09,,,,,,"Derived from cfrp by layup.woven_from_ud: A-matrix membrane equivalence to a [0/90] UD pair, crimp_factor=1.0. Derived, not measured."
