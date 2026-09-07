@@ -313,3 +313,75 @@ def test_kinds_only_moves_the_balanced_flag_not_the_stiffness():
     assert plain["balanced"] is False and woven["balanced"] is True
     for key in ("a11", "b11", "d11", "d16", "ef_x_mpa"):
         assert plain[key] == pytest.approx(woven[key], rel=1e-15)
+
+
+def rotate_tensor(c: np.ndarray, deg: float) -> np.ndarray:
+    """C'_ijkl = R_ip R_jq R_kr R_ls C_pqrs, CCW about +z."""
+    t = np.radians(deg)
+    cs, sn = np.cos(t), np.sin(t)
+    r = np.array([[cs, -sn], [sn, cs]])
+    return np.einsum("ip,jq,kr,ls,pqrs->ijkl", r, r, r, r, c)
+
+
+def test_qbar_matches_a_full_fourth_order_tensor_rotation():
+    """An independent derivation with no Voigt convention to get wrong.
+
+    qbar is written in engineering-shear Voigt, where a factor of two in the
+    wrong place is invisible at 0 and 90 degrees and wrong everywhere else.
+    This builds C_ijkl, rotates it by four explicit index contractions, and
+    reads Qbar back -- so it cannot share a convention bug with qbar, nor with
+    cases/smoke_cantilever/clpt.py.
+    """
+    from compfea.layup import _plane_stress_q
+
+    q11, q12, q22, q66 = _plane_stress_q(UD_CFRP_GENERIC)
+    c = np.zeros((2, 2, 2, 2))
+    c[0, 0, 0, 0], c[1, 1, 1, 1] = q11, q22
+    c[0, 0, 1, 1] = c[1, 1, 0, 0] = q12
+    c[0, 1, 0, 1] = c[0, 1, 1, 0] = c[1, 0, 0, 1] = c[1, 0, 1, 0] = q66
+    voigt = [(0, 0), (1, 1), (0, 1)]
+
+    for deg in (-67.5, -45.0, -30.0, 0.0, 15.0, 30.0, 45.0, 60.0, 90.0, 135.0):
+        rotated = rotate_tensor(c, deg)
+        reference = np.array(
+            [[rotated[i, j, k, ln] for k, ln in voigt] for i, j in voigt]
+        )
+        assert np.allclose(qbar(UD_CFRP_GENERIC, deg), reference, atol=1e-6), deg
+
+
+def test_qbar16_at_45_is_the_closed_form():
+    """Qbar16(+45) = (Q11 - Q22)/4, which is why D16 > 0 for a +45 stack."""
+    from compfea.layup import _plane_stress_q
+
+    q11, _q12, q22, _q66 = _plane_stress_q(UD_CFRP_GENERIC)
+    assert qbar(UD_CFRP_GENERIC, 45.0)[0, 2] == pytest.approx((q11 - q22) / 4.0)
+
+
+@pytest.mark.parametrize("long_axis", ["x", "y"])
+def test_abd_and_the_deck_share_one_angle_convention(long_axis):
+    """The link that makes D16 a mirror detector rather than a number.
+
+    qbar rotates the material 1-axis counter-clockwise about +z by the ply
+    angle. The deck states the fibre direction outright, as the first vector of
+    the *ORIENTATION card. If those disagreed, D16's sign would say nothing
+    about the deck ccx actually solves.
+    """
+    from compfea.layup import orientation_card
+
+    start = np.array([1.0, 0.0]) if long_axis == "x" else np.array([0.0, 1.0])
+    for deg in (-45.0, 0.0, 30.0, 45.0, 90.0):
+        body = orientation_card(deg, long_axis=long_axis).splitlines()[1]
+        values = [float(v) for v in body.split(",")]
+        a, b = np.array(values[:3]), np.array(values[3:])
+        t = np.radians(deg)
+        want = np.array(
+            [
+                np.cos(t) * start[0] - np.sin(t) * start[1],
+                np.sin(t) * start[0] + np.cos(t) * start[1],
+                0.0,
+            ]
+        )
+        assert np.allclose(a, want, atol=1e-9), f"{long_axis} {deg}"
+        # a x b = +z, so the in-plane pair is right-handed for both axes and
+        # qbar's rotation about +z is the same rotation the deck describes.
+        assert np.cross(a, b)[2] == pytest.approx(1.0, abs=1e-9)
