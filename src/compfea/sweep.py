@@ -109,6 +109,7 @@ class Design:
     zones: tuple[float, ...] = ()
     static_line: str = DEFAULT_STATIC_LINE
     report_deg: tuple[float, ...] = REPORT_DEG
+    stress: bool = False
 
     def __post_init__(self) -> None:
         if not self.zone_pairs:
@@ -198,7 +199,12 @@ class Design:
             f"angles={tuple(canonical_angle(a) for a in self.angles)!r}|"
             f"mat={_material_fingerprint(self.material)}|"
             f"step={DEFAULT_STEP_DEG}|start={DEFAULT_START_DEG}|"
-            f"report={self.report_deg!r}|static={self.static_line}|inc={DEFAULT_INC}"
+            f"report={self.report_deg!r}|static={self.static_line}|inc={DEFAULT_INC}|"
+            # Output requests belong in the key. Without this a run solved
+            # without the stress card is served from cache to a request that
+            # expects one, and the stress columns come back empty (or, once a
+            # schema exists for them, stale) with nothing to say why.
+            f"stress={self.stress!r}"
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
@@ -263,6 +269,9 @@ def deck_for(design: Design) -> tuple[str, list[float], float]:
         angles,
         long_axis=LONG_AXIS,
         static_line=design.static_line,
+        stress_deg=design.report_deg if design.stress else None,
+        # the un-rotation needs DISP wherever stress is printed
+        file_deg=design.report_deg if design.stress else (90.0, 180.0),
     )
     return deck, angles, tip_length_mm(mesh, long_axis=LONG_AXIS)
 
@@ -299,6 +308,78 @@ def _design_columns(design: Design) -> dict:
         "static_line": design.static_line,
         "cache_key": design.cache_key(),
     }
+
+
+def _stress_columns(
+    design: Design,
+    run_dir: Path,
+    angles: list[float],
+    report_deg: Sequence[float],
+) -> dict:
+    """Peak per-ply stress at each reported angle, in the material frame.
+
+    Imported here rather than at module scope for the same reason ``post`` is:
+    a sweep should not fail to start because an optional analysis path has a
+    bad import. Nothing here pulls in matplotlib.
+
+    The rotation angle comes from the deformed shape in the ``.frd``, not from
+    the stress tensor, so ``s33_residual`` stays an independent check rather
+    than a tautology.
+    """
+    from compfea.frd import (
+        deformed_midsurface,
+        disp_at_step,
+        index_disp_blocks,
+        read_nodes,
+    )
+    from compfea.stress import (
+        bend_angle_by_span,
+        element_spans,
+        material_frame,
+        parse_dat_stress,
+        stress_summary,
+    )
+
+    if len(design.zone_pairs) != 1:
+        raise NotImplementedError(
+            "stress output is single-zone only for now: a zoned design gives "
+            "each zone a different ply count, so one integration-point index "
+            "maps to different plies in different elements. Refusing rather "
+            "than assigning plies that are plausibly wrong."
+        )
+    ply_angles = [p.angle_deg for p in layup_for(design).zones[0].plies]
+
+    dat = run_dir / "ccx" / "job.dat"
+    frd = run_dir / "ccx" / "job.frd"
+    stress = parse_dat_stress(dat)
+    spans = element_spans(run_dir / "deck.inp", long_axis=LONG_AXIS)
+    blocks = index_disp_blocks(frd)
+    nodes = read_nodes(frd)
+
+    out: dict = {}
+    for deg in report_deg:
+        step = step_index_for(angles, float(deg))
+        # No fallback. Each *STATIC step runs a unit period, so end-of-step N is
+        # tot-time N; if that block is absent, summarising the newest block
+        # instead would file 180-degree numbers under the 90-degree column names
+        # with nothing on the row to say so.
+        block = stress[(stress["time"] - float(step)).abs() <= 1e-6]
+        if block.empty:
+            have = ", ".join(f"{t:g}" for t in sorted(stress["time"].unique()))
+            raise LookupError(
+                f"no stress printed at step {step} (theta={deg:g}); "
+                f"blocks exist at times: {have}"
+            )
+        _, disp = disp_at_step(frd, step, blocks=blocks)
+        phi_at = bend_angle_by_span(
+            deformed_midsurface(nodes, disp, long_axis=LONG_AXIS)
+        )
+        phi = {e: phi_at(s) for e, s in spans.items()}
+        mat = material_frame(block, phi, ply_angles, long_axis=LONG_AXIS)
+        tag = str(int(deg)) if float(deg).is_integer() else f"{deg:g}"
+        for key, value in stress_summary(mat).items():
+            out[f"{key}_{tag}"] = value
+    return out
 
 
 def evaluate_design(
@@ -374,6 +455,17 @@ def evaluate_design(
         # Which angle it came from: on a 5-degree path the value keyed f_180 is
         # taken at 175, and a column named for 180 would misreport that.
         row[f"linearity_dev_theta_{key.lower()}"] = at_theta.get(key)
+    if design.stress:
+        try:
+            row.update(_stress_columns(design, run_dir, angles, report_deg))
+        except Exception as exc:  # noqa: BLE001 - a stress failure is not a
+            # solve failure: the forces are still good, so keep the row and say
+            # why the stress columns are missing. Deliberately NOT cached: a
+            # cached failure is served back forever and never retried, and the
+            # run would keep reporting "ok" with no stress columns.
+            row["stress_error"] = f"{type(exc).__name__}: {exc}"
+            return row
+
     cache_path.write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
     return row
 
@@ -441,22 +533,29 @@ def run_sweep(
         log.flush()
         with ProcessPoolExecutor(max_workers=jobs) as pool:
             futures = {pool.submit(_worker, p): p for p in payloads}
-            done = ok = err = 0
+            done = ok = err = stress_failed = 0
             for fut in as_completed(futures):
                 row = fut.result()
                 rows.append(row)
                 done += 1
                 if row.get("status") == "ok":
                     ok += 1
+                    note = ""
+                    if row.get("stress_error"):
+                        stress_failed += 1
+                        note = f"  STRESS FAILED: {row['stress_error']}"
                     log.write(
                         f"ok {row['stack']} f_90={row.get('f_90', float('nan')):.4g} "
-                        f"f_180={row.get('f_180', float('nan')):.4g}\n"
+                        f"f_180={row.get('f_180', float('nan')):.4g}{note}\n"
                     )
                 else:
                     err += 1
                     log.write(f"error {row.get('stack')}: {row.get('error')}\n")
                 log.flush()
-                write_status(run_root, state="running", done=done, ok=ok, error=err)
+                write_status(
+                    run_root, state="running", done=done, ok=ok, error=err,
+                    stress_failed=stress_failed,
+                )
 
     frame = (
         pd.DataFrame(rows)
@@ -593,6 +692,15 @@ def build_parser() -> argparse.ArgumentParser:
             "runtime. Sweep it to calibrate; adopt only on matching forces."
         ),
     )
+    p.add_argument(
+        "--stress",
+        action="store_true",
+        help=(
+            "also print per-ply stress at the reported angles (*EL PRINT S, "
+            "GLOBAL=YES). Changes the cache key, so designs already solved "
+            "without it are re-solved."
+        ),
+    )
     p.add_argument("--jobs", type=int, default=None, help="default cpu_count()-2")
     p.add_argument("--timeout-s", type=float, default=1800.0)
     p.add_argument("--run-id", default=None)
@@ -633,6 +741,7 @@ def designs_from_args(args) -> list[Design]:
             fiber=fiber,
             zones=zones,
             static_line=static,
+            stress=bool(getattr(args, "stress", False)),
         )
         for fiber in args.fiber
         for ply in args.ply_mm

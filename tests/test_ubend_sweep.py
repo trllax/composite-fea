@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
-
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -16,11 +15,10 @@ from compfea.ubend import (
     build_deck,
     force_at_theta,
     step_index_for,
+    theta_grid_deg,
     tip_displacements,
     tip_length_mm,
-    theta_grid_deg,
 )
-
 
 SAMPLE_ENERGY_DAT = """
  total force (fx,fy,fz) for set FAR_FACE and time  0.1000000E+01
@@ -301,3 +299,27 @@ def test_deck_only_and_the_solve_build_the_same_deck():
     _deck, angles, _arm = deck_for(design)
     assert angles == angles_for(design)
     assert max(angles) == 90.0
+
+
+def test_the_stress_request_moves_the_cache_key():
+    """An output request that changes the .dat must change the key.
+
+    Without this a design solved without the stress card is served straight
+    from cache to a request that expects one, and the stress columns come back
+    empty with nothing on the row to say why.
+    """
+    from compfea.sweep import Design
+
+    plain = Design()
+    stressed = Design(stress=True)
+    assert plain.cache_key() != stressed.cache_key()
+
+
+def test_only_the_reported_angles_carry_a_stress_card():
+    """The card is per-step; carrying it on all 36 steps is pure .dat bloat."""
+    from compfea.sweep import Design, deck_for
+
+    deck, _, _ = deck_for(Design(stress=True, report_deg=(90.0, 180.0)))
+    assert deck.count("GLOBAL=YES") == 2
+    assert "FREQUENCY=" in deck  # end-of-step only, not every increment
+    assert deck_for(Design())[0].count("GLOBAL=YES") == 0

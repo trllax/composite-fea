@@ -112,6 +112,57 @@ Cross-check every moment against `2U/theta` from the energy output. The two
 routes agree to 0.006% when ply ordering and z-stations are right, and diverge
 loudly when they are not.
 
+### What `*EL PRINT S` actually emits (measured, 2026-09-06)
+
+Probed with three variants of `cantilever_89deg.inp` (`results/stress_probe/`),
+16 S8R elements, `[0/90/90/0]` at 0.25 mm, driven to 89 degrees.
+
+- **The element id is the S8R id, not an expanded solid id.** The block lists
+  elements 1-16 -- the deck's own numbering -- even though ccx integrates on
+  expanded solids underneath. This is the opposite of the `.frd`, where node ids
+  are the expanded mesh and cannot be joined to the deck. Do not assume the two
+  outputs share a numbering convention; they do not.
+- **32 integration points per element**: 8 per ply, four plies, thickness the
+  slowest index. 512 rows per block for this mesh.
+- **A blank line follows the header** before the first data row, same as the
+  energy block, so a bounded look-ahead is needed to find the data.
+- **Local rows carry a trailing orientation name; global rows do not.** Bare `S`
+  gives 9 whitespace fields ending in e.g. `ORI_P00_shell_000000` (ccx appends
+  `_shell_<n>` to the name from the `*ORIENTATION` card). `GLOBAL=YES` gives 8
+  fields and no name. Field count is a reliable discriminator for which frame a
+  block is in.
+- **`GLOBAL=YES` does not help with rotation.** It emits the same tensor in
+  global axes rather than the ply's t=0 axes -- for `ori_p00`, local `sxx` is
+  global `syy` -- but it is equally non-co-rotating. There is no ccx option that
+  returns co-rotated stress; the correction has to be done in post.
+- **`FREQUENCY=` larger than the increment count yields exactly one block, at
+  the end of the step.** Here `FREQUENCY=100` over 71 increments gave a single
+  block at t=1.0 and cut the `.dat` from 4.4 MB to 62 kB. Use this rather than
+  printing every increment; unthrottled `S` output is ~70x larger and all but
+  the end-of-step blocks are discarded anyway.
+
+**The rotation is recoverable and the shell assumption is measurable.** The bend
+is about the width axis, so that axis' normal stress is untouched while the
+(axial, through-thickness) block rotates within itself. At mid-span at 89
+degrees the raw global block reads `syy=554.1, szz=392.1, syz=468.4` MPa -- a
+through-thickness normal stress of 392 MPa, which is nonsense for a shell and is
+purely an artefact of the frame. Its principal values are **948.44** and
+**-2.232** MPa: the axial stress, and a through-thickness residual that is
+0.235% of it. That residual is the check -- it is near zero only when the
+rotation has been undone correctly, and it grows loudly when it has not.
+
+The angle falls out of the same block, `phi = atan2(2*syz, syy-szz)/2 = 40.1`
+degrees at element 8 of 16, consistent with roughly half of the 89-degree tip
+rotation at mid-span. Deriving `phi` from the stress and then checking the
+through-thickness residual is circular, though: take `phi` from the deformed
+geometry (`frd.deformed_midsurface`) and keep the stress-derived value as an
+independent cross-check.
+
+Two of the three in-plane components need no angle at all: the width-direction
+normal stress is invariant under this rotation, and the axial stress is the
+trace of the rotating 2x2 block. Only the in-plane shear requires `phi`, because
+the `(axial-width, normal-width)` shear pair rotates as a vector.
+
 ## Mesh
 
 Converged by 8 elements along the beam: 4->8 moves the answer 0.2%, 8->64 moves
