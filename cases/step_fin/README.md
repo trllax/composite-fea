@@ -160,3 +160,84 @@ Saved 90° solve (do not overwrite): `results/fin_ubend_90_saved/`
 
 Both were meshed at 40 mm and are therefore holed -- keep them as a record of
 the run, not as a result.
+
+## How a named shell becomes an ELSET (measured, 2026-09-07)
+
+Zone membership used to be a **1-D bounding box**: an element belonged to a
+named shell if its centroid's `x` fell inside that shell's x-range. Names came
+from a regex scan of the STEP text, geometry came from OpenCASCADE, and the two
+were never joined by entity identity. On this very STEP that produced wrong
+zones for three of six shells:
+
+| shell | old x-span mask | true extent | true area (mm^2) |
+| --- | --- | --- | --- |
+| `FULL` | 0 .. 1174.92 | 0 .. 1174.92 | 336223.808 |
+| `3_4ths` | 0 .. 700.00 | 0 .. 700.00 | 193746.626 |
+| `HALF` | 0 .. **674.92** | 0 .. **450.00** | 118746.626 |
+| `QUARTER` | 0 .. **674.92** | 0 .. **300.00** | 73746.626 |
+| `TIP` | **674.92** .. 1174.92 | **974.92** .. 1174.92 | 60000.000 |
+| `HEAL` | 0 .. 172.66 | 0 .. 172.66 | 37502.639 |
+
+`HALF` and `QUARTER` came out with **identical** ELSETs, and the `TIP` mask was
+2.5x its true area. The cause is `_collect_points`: it walks the entity graph
+collecting `CARTESIAN_POINT`s, which for a B-spline face are **control points**,
+not the trimmed face. Their hull overhangs the real surface, so the derived
+x-range is an over-estimate — silently, and by 225 mm here.
+
+### What replaced it
+
+The STEP is regular: each `SHELL_BASED_SURFACE_MODEL` names an `OPEN_SHELL`
+holding an ordered list of `ADVANCED_FACE`s.
+
+```
+FULL    #483 -> 7 faces  #462..#468      QUARTER #486 -> 3 faces  #475..#477
+3_4ths  #484 -> 5 faces  #469..#473      HALF    #487 -> 4 faces  #478..#481
+HEAL    #485 -> 1 face   #474            TIP     #488 -> 1 face   #482
+```
+
+21 faces, and OCC imports exactly 21 surfaces as tags 1..21 **in declaration
+order**. `occ.fragment` returns `outDimTagsMap`, parallel to `objects + tools`,
+whose entry *i* lists the tiles input face *i* became. Composing the two gives
+name -> tiles -> elements exactly, with no geometric tolerance anywhere.
+
+### Three things probed, and what each was worth
+
+- **`Geometry.OCCImportLabels = 1` does not carry the names.** Only 2 of the 6
+  arrive (`Shapes/HEAL`, `Shapes/TIP`), and OCC attaches them to *every*
+  geometrically coincident face — 5 tags are labelled `HEAL`, including faces
+  that belong to `FULL`, `HALF`, `QUARTER` and `3_4ths`. Useless as the primary
+  mapping. Useful as a check: the tiles of a labelled tag must sit inside the
+  tiles assigned to that name.
+- **Area conservation across `fragment` has no discriminating power.** It looks
+  like a good invariant and it is a tautology: `fragment` conserves area, so
+  *any* block partition of the inputs conserves it. Swapping `HEAL` and `TIP`
+  passes with `rel = 0.000e+00`. Do not re-add this check believing it tests
+  something.
+- **Control-point hull containment is the label-free check that works.** By the
+  convex-hull property a B-spline face lies inside its control points, so the
+  bbox of the tiles assigned to a shell must sit inside that shell's
+  control-point bbox. It is a superset test, so it cannot false-alarm; measured
+  overhang on the correct assignment is exactly `0.0000` for all six shells.
+  It catches a `HEAL`/`TIP` swap (1002 mm overhang), a one-step rotation
+  (675 mm), and a `FULL`/`3_4ths` block swap (275 mm).
+
+`shell_x_ranges_mm` is kept — it is still how the names are read — but it is a
+**hull**, not a mask, and nothing decides membership from it any more.
+
+### What the old mask did to this fin's laminate
+
+`default_plies()` resolved through `layup_from_coverage` at `--size-mm 16`,
+before and after. Same 1786 elements, same six shells, same ply list:
+
+| | zones | stacks |
+| --- | --- | --- |
+| **old** (x-range mask) | 5 | `[0/90/0]` 754 el · `[0/90/0/0]` **40 el** · `[0/90/0/90]` 784 el · `[0/90/0/90/0]` **3 el** · `[0/90/0/90/45]` 205 el |
+| **new** (fragment map) | 5 | `[0/90]` 423 el · `[0/90/0]` 375 el · `[0/90/0/90]` 452 el · `[0/90/0/90/45]` 205 el · `[0/90/0]` 331 el (TIP) |
+
+The two tiny zones in the old column — 40 elements and **3 elements** — are not
+design intent. They are the ±2 mm centroid band where the `HALF` and `TIP`
+hulls overlapped, and they put an extra 0-degree ply on a 3-element sliver.
+The `TIP` reinforcement also covered about 2.5x the area it was drawn on, and
+`HALF` and `QUARTER` were the same set, so a ply on one was a ply on both.
+
+Any force previously computed from this STEP was computed on that laminate.

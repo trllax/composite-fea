@@ -7,21 +7,120 @@ from pathlib import Path
 import pytest
 
 from compfea.geometry import GeometryError, check_watertight
-from compfea.step_mesh import mesh_step, shell_x_ranges_mm
+from compfea.step_mesh import (
+    mesh_step,
+    shell_faces,
+    shell_hulls_mm,
+    shell_x_ranges_mm,
+    zone_report,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 FIN2 = ROOT / "test_fin_2.step"
 
-pytestmark = pytest.mark.skipif(not FIN2.is_file(), reason="test_fin_2.step not in repo root")
+pytestmark = pytest.mark.skipif(
+    not FIN2.is_file(), reason="test_fin_2.step not in repo root"
+)
 
 
-def test_shell_x_ranges_named_products():
+NAMES = {"FULL", "3_4ths", "HEAL", "QUARTER", "HALF", "TIP"}
+
+#: OCC face areas of each named shell's tiles, mm^2. Measured once from
+#: occ.getMass on test_fin_2.step; these are CAD numbers, not mesh numbers.
+CAD_AREA_MM2 = {
+    "FULL": 336223.808,
+    "z_3_4ths": 193746.626,
+    "HALF": 118746.626,
+    "QUARTER": 73746.626,
+    "TIP": 60000.000,
+    "HEAL": 37502.639,
+}
+
+
+def test_shell_x_ranges_are_a_hull_not_a_mask():
+    """The control-point hull overhangs the real face, and by a lot.
+
+    This function is kept because it is how the names are read, but membership
+    must never come from it: HALF and QUARTER have the *same* hull x-range here
+    while their true extents are 450 and 300 mm, and TIP's hull starts 300 mm
+    inboard of the real TIP face. Asserting the overhang keeps the distinction
+    from quietly being forgotten again.
+    """
     ranges = shell_x_ranges_mm(FIN2)
-    assert set(ranges) == {"FULL", "3_4ths", "HEAL", "QUARTER", "HALF", "TIP"}
-    assert ranges["FULL"][0] == pytest.approx(0.0, abs=1e-3)
+    assert set(ranges) == NAMES
     assert ranges["FULL"][1] == pytest.approx(1174.9, rel=1e-3)
-    assert ranges["HEAL"][1] < ranges["HALF"][1] <= ranges["3_4ths"][1] < ranges["FULL"][1]
+    # The bug the fragment map replaced: these two hulls are indistinguishable.
+    assert ranges["HALF"] == pytest.approx(ranges["QUARTER"])
     assert ranges["TIP"][0] == pytest.approx(ranges["HALF"][1], rel=1e-3)
+
+
+def test_shell_faces_are_read_in_step_order():
+    """21 faces over 6 shells, contiguous ids -- what the mapping rests on."""
+    faces = shell_faces(FIN2)
+    assert set(faces) == NAMES
+    assert {n: len(f) for n, f in faces.items()} == {
+        "FULL": 7, "3_4ths": 5, "HEAL": 1, "QUARTER": 3, "HALF": 4, "TIP": 1
+    }
+    flat = sorted(f for ids in faces.values() for f in ids)
+    assert len(flat) == 21
+    assert flat == list(range(flat[0], flat[0] + 21)), "face ids must be contiguous"
+    # Each shell owns a contiguous block, root-of-the-file first.
+    for ids in faces.values():
+        assert list(ids) == list(range(ids[0], ids[0] + len(ids)))
+
+
+def test_shell_hulls_contain_every_true_zone():
+    """The containment the alignment check relies on, stated directly."""
+    hulls = shell_hulls_mm(FIN2)
+    mesh = mesh_step(FIN2, size_mm=CLEAN_SIZE_MM)
+    sane = {"3_4ths": "z_3_4ths"}
+    for name, hull in hulls.items():
+        eids = mesh.elsets[sane.get(name, name)]
+        pts = [mesh.nodes[n] for e in eids for n in mesh.elements[e]]
+        for axis in (0, 1, 2):
+            assert min(p[axis] for p in pts) >= hull[axis] - 1e-6
+            assert max(p[axis] for p in pts) <= hull[axis + 3] + 1e-6
+
+
+def test_zones_match_their_cad_faces_not_a_bounding_box():
+    """The regression this phase exists for.
+
+    Zone membership used to be "element centroid x inside the shell's hull".
+    That gave HALF and QUARTER *identical* ELSETs and made TIP 2.5x too large.
+    Membership now follows the OCC fragment map, so each zone's meshed area
+    must reproduce the CAD area of the faces it came from.
+    """
+    mesh = mesh_step(FIN2, size_mm=CLEAN_SIZE_MM)
+    rows = {r["zone"]: r for r in zone_report(mesh)}
+    assert set(rows) == set(CAD_AREA_MM2) | {"blade"}
+
+    for zone, cad in CAD_AREA_MM2.items():
+        got = rows[zone]["area_mm2"]
+        # Chordal error under-measures a curved band; worst here is 0.007%.
+        assert got == pytest.approx(cad, rel=1e-3), f"{zone}: {got} vs CAD {cad}"
+
+    # The two that used to collapse onto one mask are now distinct...
+    assert set(mesh.elsets["HALF"]) != set(mesh.elsets["QUARTER"])
+    assert set(mesh.elsets["QUARTER"]) < set(mesh.elsets["HALF"])
+    # ...and their true extents differ by 150 mm, which the hull could not see.
+    assert rows["HALF"]["x_max_mm"] == pytest.approx(450.0, abs=1e-6)
+    assert rows["QUARTER"]["x_max_mm"] == pytest.approx(300.0, abs=1e-6)
+    # TIP starts at its real face, 300 mm outboard of where the hull put it.
+    assert rows["TIP"]["x_min_mm"] == pytest.approx(974.92, rel=1e-4)
+
+
+def test_zones_nest_the_way_the_cad_does():
+    mesh = mesh_step(FIN2, size_mm=CLEAN_SIZE_MM)
+    z = {n: set(mesh.elsets[n]) for n in mesh.elsets}
+    assert z["HEAL"] < z["QUARTER"] < z["HALF"] < z["z_3_4ths"] < z["FULL"]
+    assert z["FULL"] == z["blade"]
+    # TIP is outboard of everything else and shares no element with 3_4ths.
+    assert not (z["TIP"] & z["z_3_4ths"])
+
+
+def test_coverage_tol_mm_is_dead_and_says_so():
+    with pytest.deprecated_call():
+        mesh_step(FIN2, size_mm=40.0, coverage_tol_mm=2.0)
 
 
 # 17.0 is the coarsest that recombines to all quad8; 17.25 already leaves
@@ -121,7 +220,7 @@ def test_mesh_step_imprints_and_tags_nested_coverage():
     assert set(mesh.elsets["HALF"]).issubset(full)
     # 3_4ths starts with a digit -> sanitized
     assert "z_3_4ths" in mesh.elsets
-    assert len(mesh.elsets["z_3_4ths"]) >= len(mesh.elsets["HALF"])
+    assert len(mesh.elsets["z_3_4ths"]) > len(mesh.elsets["HALF"])
 
     # Fragment imprint: more than one unique element x-station near known drops
     xs = sorted(
