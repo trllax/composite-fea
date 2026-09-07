@@ -125,15 +125,20 @@ def build_deck(
     static_line: str = DEFAULT_STATIC_LINE,
     inc: int = DEFAULT_INC,
     file_deg: Sequence[float] | None = (90.0, 180.0),
+    stress_deg: Sequence[float] | None = None,
 ) -> str:
     """Multi-step NLGEOM deck: root clamp + tip U at each θ.
 
     ``file_deg`` angles get ``*NODE FILE`` / U (DISP in the ``.frd``). Default
     is 90° and 180° only so FRDs stay small; pass ``()`` to disable.
+
+    ``stress_deg`` angles additionally get ``*EL PRINT ... S``. Default is off:
+    the card is cheap per step but only worth carrying where post will read it.
     """
     if not angles_deg:
         raise ValueError("angles_deg must not be empty")
     file_set = {float(d) for d in (file_deg or ())}
+    stress_set = {float(d) for d in (stress_deg or ())}
     steps = [
         StaticStep(
             tip_u_clamp_body(
@@ -141,6 +146,7 @@ def build_deck(
                     mesh, math.radians(float(deg)), long_axis=long_axis
                 ),
                 node_file=any(abs(float(deg) - d) <= 1e-9 for d in file_set),
+                stress=any(abs(float(deg) - d) <= 1e-9 for d in stress_set),
             ),
             inc=inc,
             static_line=static_line,

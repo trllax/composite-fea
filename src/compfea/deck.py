@@ -60,17 +60,31 @@ def assemble(
     return "\n\n".join(parts) + "\n"
 
 
+#: Any value above a step's increment count leaves only the end-of-step block,
+#: which is the one anyone reads. Measured: FREQUENCY=100 over 71 increments cut
+#: a 4.4 MB .dat to 62 kB. Unthrottled S output is ~70x larger and every block
+#: but the last is discarded in post.
+STRESS_FREQUENCY = 1000000
+
+
 def tip_u_clamp_body(
     node_u: dict[int, tuple[float, float, float]],
     *,
     energy_elset: str = "blade",
     tip_nset: str = "far_face",
     node_file: bool = False,
+    stress: bool = False,
 ) -> str:
     """Step body: prescribe tip node translations; print RF + ELSE.
 
     ``node_file=True`` adds ``*NODE FILE`` / U so the ``.frd`` gets DISP at
     the end of this step (omit on intermediate steps to keep FRDs small).
+
+    ``stress=True`` adds ``*EL PRINT ... GLOBAL=YES`` / S. ``GLOBAL=YES`` is
+    deliberate: a bare S card reports each ply in its own ``*ORIENTATION`` frame,
+    so plies at different angles arrive in different bases, while the global card
+    puts every ply in one basis for the cost of a ply-angle rotation that post
+    has to do anyway. Neither frame co-rotates -- see ``compfea.stress``.
     """
     lines = ["*BOUNDARY"]
     for n, (ux, uy, uz) in sorted(node_u.items()):
@@ -83,6 +97,12 @@ def tip_u_clamp_body(
         f"*EL PRINT, ELSET={energy_elset}, TOTALS=ONLY",
         "ELSE",
     ]
+    if stress:
+        lines += [
+            f"*EL PRINT, ELSET={energy_elset}, GLOBAL=YES, "
+            f"FREQUENCY={STRESS_FREQUENCY}",
+            "S",
+        ]
     if node_file:
         lines += ["*NODE FILE", "U"]
     return "\n".join(lines)
