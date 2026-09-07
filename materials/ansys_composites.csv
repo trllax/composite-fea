@@ -1,0 +1,22 @@
+# units: stress=Pa density=kg/m3
+#
+# ANSYS Engineering Data composite library -- PASTE YOUR OWN ROWS BELOW.
+#
+# Deliberately empty. Inventing numbers that solve cleanly is the failure
+# this repo is built to avoid, so nothing is filled in for you.
+#
+# The units line above matches what ANSYS exports (Pa, kg/m3), so rows can
+# be pasted unconverted; compfea.materials converts and then range-checks.
+# If you export in different units, change the line -- do not convert by
+# hand and leave it saying Pa.
+#
+# ANSYS names its Poisson ratios nu_XY / nu_XZ / nu_YZ, which are the
+# MAJOR ratios and go straight into nu12 / nu13 / nu23. If a value looks
+# like 0.02 rather than 0.3 you have picked up the minor ratio; the
+# loader warns about exactly that.
+#
+# kind is 'ud' or 'woven'. It gates validation and is echoed in reports;
+# it does not change the deck.
+#
+# source is required. Record the ANSYS library name and version.
+name,kind,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,xt,xc,yt,yc,s12,source

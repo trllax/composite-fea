@@ -33,6 +33,7 @@ ccx -v                            # must work before anything else
 | `cases/tip_force_disp` | tip force-displacement |
 | `cases/step_fin` | STEP-imported fin U-bend runner |
 | `cases/sweep_ubend` | the laminate sweep on the strip U-bend |
+| `cases/fin_zoned` | the design front door: STEP zones + ply book + materials |
 
 Both are regression cases. `CLAUDE.md` explains why neither tolerance moves.
 
@@ -43,6 +44,10 @@ Both are regression cases. `CLAUDE.md` explains why neither tolerance moves.
 | `geometry.py` | planform outline -> quad8 shell mesh + zone ELSETs -> `.inp` |
 | `step_mesh.py` | STEP import, OCC imprint, ACP-style ply coverage masks |
 | `layup.py` | design vector -> `*SHELL SECTION, COMPOSITE` |
+| `materials.py` | materials CSV -> lamina cards, units declared and checked |
+| `plybook.py` | ply-book CSV -> a `Layup` bound to the mesh's zones |
+| `abd.py` | CLPT A/B/D per zone; the pre-solve check against ACP |
+| `build.py` | `compfea-build`: STEP + ply book + materials -> deck + reports |
 | `deck.py` | assemble a complete `.inp` |
 | `ubend.py` | tip-U clamp path -> multi-step NLGEOM deck |
 | `run.py` | run `ccx`, validate convergence, parse `.dat` |
@@ -52,6 +57,7 @@ Both are regression cases. `CLAUDE.md` explains why neither tolerance moves.
 | `sweep_post.py` | a sweep's `results.parquet` -> ranked CSV + figures |
 | `frd.py` | streaming `.frd` reader; displacements only |
 | `shapes.py` | planform, target-arc and deformed-shape plots |
+| `stress.py` | `.dat` ply stresses corrected into the material frame |
 
 ## Sweep (U-bend laminate)
 

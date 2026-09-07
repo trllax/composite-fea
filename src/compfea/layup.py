@@ -31,6 +31,7 @@ avoid. Callers say which, and each case README records it.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 # Ply angles are rounded to this many decimal places before anything is derived
@@ -404,7 +405,8 @@ def layup_from_coverage(
     element_coverages: dict[int, frozenset[str]],
     *,
     long_axis: str,
-    material: EngineeringConstants = PLACEHOLDER_CFRP,
+    material: EngineeringConstants | None = None,
+    materials: Sequence[EngineeringConstants] | None = None,
 ) -> tuple[Layup, dict[str, tuple[int, ...]]]:
     """Expand ACP-style covered plies into exclusive COMPOSITE zones.
 
@@ -412,7 +414,23 @@ def layup_from_coverage(
     or listed in that element's masks. Elements that share the same resulting
     stack share one ELSET (``cov_1``, ``cov_2``, ...). Returns the ``Layup`` and
     the exclusive elset membership map to merge onto the mesh.
+
+    Two mutually exclusive ways to say what the plies are made of:
+
+    - ``material=`` -- one card for the whole part. Any ply still carrying the
+      default name ``"cfrp"`` is rewritten to it. Convenient, and the reason a
+      per-ply materials table cannot go through this path.
+    - ``materials=`` -- a library. Ply material names are taken **as written**
+      and never rewritten, and only the cards actually referenced are emitted,
+      sorted by name so the deck is byte-identical across runs.
+
+    Neither means ``material=PLACEHOLDER_CFRP``, preserving the old default.
     """
+    if material is not None and materials is not None:
+        raise ValueError(
+            "pass material= (one card, rewrites the default name) or "
+            "materials= (a library, names taken as written), not both"
+        )
     if not plies:
         raise ValueError("at least one ply is required")
     if not element_coverages:
@@ -426,16 +444,37 @@ def layup_from_coverage(
                 f"{sorted(known_masks)}"
             )
 
-    # Map default "cfrp" onto the library material name (same as Layup.uniform).
-    fixed_plies = tuple(
-        Ply(
-            p.thickness,
-            p.angle_deg,
-            material.name if p.material == "cfrp" else p.material,
-            p.coverage,
+    if materials is None:
+        # Map default "cfrp" onto the library material name (as Layup.uniform).
+        card = PLACEHOLDER_CFRP if material is None else material
+        fixed_plies = tuple(
+            Ply(
+                p.thickness,
+                p.angle_deg,
+                card.name if p.material == "cfrp" else p.material,
+                p.coverage,
+            )
+            for p in plies
         )
-        for p in plies
-    )
+        cards: tuple[EngineeringConstants, ...] = (card,)
+    else:
+        # Names as written. Emitting only what is referenced keeps an unused
+        # library row out of the deck, and therefore out of any cache key.
+        fixed_plies = tuple(plies)
+        by_name = {m.name: m for m in materials}
+        if len(by_name) != len(tuple(materials)):
+            raise ValueError(
+                f"duplicate material names in library: "
+                f"{sorted(m.name for m in materials)}"
+            )
+        used = {p.material for p in fixed_plies}
+        unknown = sorted(used - set(by_name))
+        if unknown:
+            raise ValueError(
+                f"ply material(s) {unknown} not in the library "
+                f"{sorted(by_name)}"
+            )
+        cards = tuple(by_name[n] for n in sorted(used))
 
     groups: dict[tuple[tuple[float, float, str], ...], list[int]] = {}
     stack_plies: dict[tuple[tuple[float, float, str], ...], tuple[Ply, ...]] = {}
@@ -465,7 +504,7 @@ def layup_from_coverage(
             f"{len(element_coverages)} elements"
         )
 
-    layup = Layup(materials=(material,), zones=tuple(zones), long_axis=long_axis)
+    layup = Layup(materials=cards, zones=tuple(zones), long_axis=long_axis)
     return layup, elsets
 
 

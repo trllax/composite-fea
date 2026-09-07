@@ -6,7 +6,7 @@ coverage masks, not exclusive tiles. This module:
 1. Imports all shells via OpenCASCADE
 2. ``fragment``s them so ply-drop boundaries become mesh edges (vertices)
 3. Meshes the unique tiles as second-order incomplete quads (S8R)
-4. Tags each element with every shell whose x-span contains its centroid
+4. Tags each element with every shell whose faces became its tile (exact)
 5. Builds root/tip NSETs from the min/max-x boundary nodes
 
 Units: STEP SI metres are scaled to mm to match the rest of the repo.
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
@@ -23,10 +24,9 @@ import gmsh
 import numpy as np
 
 from compfea.geometry import (
+    _GMSH_QUAD8,
     GeometryError,
     Mesh,
-    _GMSH_QUAD8,
-    _corners,
     _snap,
     check_quad_fraction,
     check_watertight,
@@ -38,6 +38,29 @@ _GMSH_TRI6 = 9
 _STEP_M_TO_MM = 1000.0
 _SHELL_MODEL = "SHELL_BASED_SURFACE_MODEL"
 _CARTESIAN_POINT = "CARTESIAN_POINT"
+
+#: gmsh pads every OCC bounding box by a **fixed, absolute** 1e-7 model units --
+#: measured identical on rectangles of 1, 10, 100 and 1000 mm. So a purely
+#: relative budget is wrong: 1e-9 * span alone passes only where a face spans
+#: more than 100 mm, and a correctly ordered STEP of a part ten times smaller
+#: than test_fin_2 is refused. The absolute floor is that pad with a decade of
+#: margin; the relative term carries large parts where float noise scales.
+_HULL_PAD_MM = 1e-6
+_HULL_TOL_REL = 1e-9
+
+#: Entity types whose extent is a radius rather than a CARTESIAN_POINT, with the
+#: number of leading numeric arguments that are lengths. A face bounded by one
+#: of these reaches up to that radius away from any point recorded for it, so
+#: the point hull alone is NOT a superset -- see _collect_extent.
+_RADIUS_ARGS = {
+    "CIRCLE": 1,
+    "ELLIPSE": 2,
+    "CYLINDRICAL_SURFACE": 1,
+    "CONICAL_SURFACE": 1,
+    "SPHERICAL_SURFACE": 1,
+    "TOROIDAL_SURFACE": 2,
+    "DEGENERATE_TOROIDAL_SURFACE": 2,
+}
 
 
 def _parse_step_entities(text: str) -> dict[int, tuple[str, str]]:
@@ -68,29 +91,337 @@ def _collect_points(
     return pts
 
 
-def shell_x_ranges_mm(step_path: str | Path) -> dict[str, tuple[float, float]]:
-    """Named SHELL_BASED_SURFACE_MODEL -> (xmin, xmax) in mm."""
+def _collect_radii(
+    ents: dict[int, tuple[str, str]], eid: int, seen: set[int] | None = None
+) -> float:
+    """Largest radius-like length anywhere under ``eid``, in STEP units.
+
+    ``_collect_points`` sees only ``CARTESIAN_POINT``s, and for a circle,
+    ellipse or cylinder the extent lives in a **radius**, not a point. A face
+    bounded by a full circle records its centre and nothing else, so its point
+    hull is a degenerate segment -- tighter than the face, not a superset.
+    Inflating every hull by the largest radius under it restores the superset
+    property conservatively.
+    """
+    if seen is None:
+        seen = set()
+    if eid in seen or eid not in ents:
+        return 0.0
+    seen.add(eid)
+    typ, arg = ents[eid]
+    radius = 0.0
+    count = _RADIUS_ARGS.get(typ)
+    if count:
+        numbers = re.findall(r"(?<![#\w.])(-?\d+\.\d*(?:[eE][-+]?\d+)?)", arg)
+        for value in numbers[:count]:
+            radius = max(radius, abs(float(value)))
+    for ref in re.findall(r"#(\d+)", arg):
+        radius = max(radius, _collect_radii(ents, int(ref), seen))
+    return radius
+
+
+def shell_faces(step_path: str | Path) -> dict[str, tuple[int, ...]]:
+    """Named ``SHELL_BASED_SURFACE_MODEL`` -> its ``ADVANCED_FACE`` ids, in order.
+
+    A named shell is a *collection* of faces, not one face: in
+    ``test_fin_2.step`` the six names hold 7/5/1/3/4/1 faces for 21 in total,
+    and OCC imports exactly those 21 surfaces in declaration order. That
+    correspondence is what lets a name reach an element exactly, with no
+    geometric tolerance -- see ``cases/step_fin/README.md``.
+    """
     text = Path(step_path).read_text()
     ents = _parse_step_entities(text)
-    out: dict[str, tuple[float, float]] = {}
-    for eid, (typ, arg) in ents.items():
+    out: dict[str, tuple[int, ...]] = {}
+    for _eid, (typ, arg) in ents.items():
         if typ != _SHELL_MODEL:
             continue
         name_m = re.search(r"'([^']+)'", arg)
         if name_m is None:
             continue
-        name = name_m.group(1)
-        pts = _collect_points(ents, eid)
-        if not pts:
-            raise GeometryError(f"STEP shell {name!r} has no CARTESIAN_POINT data")
-        xs = [p[0] * _STEP_M_TO_MM for p in pts]
-        out[name] = (min(xs), max(xs))
+        faces: list[int] = []
+        for shell_ref in (int(r) for r in re.findall(r"#(\d+)", arg)):
+            if shell_ref not in ents:
+                raise GeometryError(
+                    f"STEP shell {name_m.group(1)!r} references missing #{shell_ref}"
+                )
+            faces.extend(int(r) for r in re.findall(r"#(\d+)", ents[shell_ref][1]))
+        if not faces:
+            raise GeometryError(f"STEP shell {name_m.group(1)!r} holds no faces")
+        out[name_m.group(1)] = tuple(faces)
     if not out:
         raise GeometryError(
             f"no {_SHELL_MODEL} names in {step_path}; export overlapping "
             "named surfaces/bodies from Onshape"
         )
     return out
+
+
+def shell_hulls_mm(step_path: str | Path) -> dict[str, tuple[float, ...]]:
+    """Named shell -> ``(xmin, ymin, zmin, xmax, ymax, zmax)`` of its points, mm.
+
+    These are ``CARTESIAN_POINT``s, which for a B-spline face are **control
+    points**. By the convex-hull property the trimmed face lies inside them, so
+    this box is a superset of the real surface and never a description of it.
+
+    That distinction is the whole reason this function is not a mask. Zone
+    membership used to be "is the element centroid inside this shell's x-range",
+    and on ``test_fin_2.step`` the hull overhangs the true face by up to 225 mm:
+    ``HALF`` and ``QUARTER`` came out with identical ELSETs and ``TIP`` covered
+    2.5x its true area. Use it only as a containment check.
+    """
+    text = Path(step_path).read_text()
+    ents = _parse_step_entities(text)
+    out: dict[str, tuple[float, ...]] = {}
+    for eid, (typ, arg) in ents.items():
+        if typ != _SHELL_MODEL:
+            continue
+        name_m = re.search(r"'([^']+)'", arg)
+        if name_m is None:
+            continue
+        pts = _collect_points(ents, eid)
+        if not pts:
+            raise GeometryError(
+                f"STEP shell {name_m.group(1)!r} has no CARTESIAN_POINT data"
+            )
+        cols = [[p[k] * _STEP_M_TO_MM for p in pts] for k in (0, 1, 2)]
+        out[name_m.group(1)] = (
+            min(cols[0]), min(cols[1]), min(cols[2]),
+            max(cols[0]), max(cols[1]), max(cols[2]),
+        )
+    if not out:
+        raise GeometryError(
+            f"no {_SHELL_MODEL} names in {step_path}; export overlapping "
+            "named surfaces/bodies from Onshape"
+        )
+    return out
+
+
+def face_hulls_mm(step_path: str | Path) -> dict[int, tuple[float, ...]]:
+    """``ADVANCED_FACE`` id -> its control-point bounding box in mm.
+
+    Per **face**, not per shell, and that distinction carries the alignment
+    check. Two shells can share a hull exactly -- ``HALF`` and ``QUARTER`` in
+    ``test_fin_2.step`` do, to the last digit -- so a per-shell containment test
+    has no power between them, which is the pair that caused the original zone
+    bug.
+
+    Their individual faces do not all differ either: three of ``QUARTER``'s
+    hulls match three of ``HALF``'s exactly. What makes the per-face check
+    sufficient is not that every face is distinguishable, but that **every
+    swap it cannot see moves no element**: of the 210 pairwise face swaps on
+    this STEP, 27 pass, and in all 27 the two faces fragment to identical tile
+    sets, so no ELSET changes. Zero harmful misses, and 0/2000 random
+    permutations missed. ``tests/test_step_mesh.py`` asserts that property
+    rather than the distinguishability it does not have.
+
+    The box is inflated by any radius under the face -- see ``_collect_radii``,
+    without which this is not a superset and refuses valid geometry.
+    """
+    ents = _parse_step_entities(Path(step_path).read_text())
+    wanted: set[int] = set()
+    for _eid, (typ, arg) in ents.items():
+        if typ != _SHELL_MODEL:
+            continue
+        for shell_ref in (int(r) for r in re.findall(r"#(\d+)", arg)):
+            if shell_ref in ents:
+                wanted.update(int(r) for r in re.findall(r"#(\d+)", ents[shell_ref][1]))
+    out: dict[int, tuple[float, ...]] = {}
+    for fid in wanted:
+        pts = _collect_points(ents, fid)
+        if not pts:
+            raise GeometryError(f"STEP face #{fid} has no CARTESIAN_POINT data")
+        cols = [[p[k] * _STEP_M_TO_MM for p in pts] for k in (0, 1, 2)]
+        grow = _collect_radii(ents, fid) * _STEP_M_TO_MM
+        out[fid] = (
+            min(cols[0]) - grow, min(cols[1]) - grow, min(cols[2]) - grow,
+            max(cols[0]) + grow, max(cols[1]) + grow, max(cols[2]) + grow,
+        )
+    return out
+
+
+def shell_x_ranges_mm(step_path: str | Path) -> dict[str, tuple[float, float]]:
+    """Named shell -> ``(xmin, xmax)`` of its control-point hull, mm.
+
+    Kept because it is how the names are read and reported. It is a **hull**,
+    not a mask: see ``shell_hulls_mm``. Nothing decides zone membership from it.
+    """
+    return {n: (h[0], h[3]) for n, h in shell_hulls_mm(step_path).items()}
+
+
+def _tiles_by_shell(
+    face_order: list[str],
+    out_map: list[list[tuple[int, int]]],
+) -> dict[str, set[int]]:
+    """Shell name -> the fragment tiles its faces became.
+
+    ``out_map`` is what ``occ.fragment`` returns alongside the entity list: it
+    is parallel to ``objects + tools``, and entry *i* lists the tiles that input
+    surface *i* was cut into. ``face_order`` is the shell name of each input
+    surface, in the same order.
+    """
+    tiles: dict[str, set[int]] = {}
+    for index, name in enumerate(face_order):
+        for _dim, tag in out_map[index]:
+            tiles.setdefault(name, set()).add(tag)
+    return tiles
+
+
+def _check_alignment(
+    face_ids: list[int],
+    face_hulls: dict[int, tuple[float, ...]],
+    tile_bbox: dict[int, tuple[float, ...]],
+    labels: dict[int, str],
+    face_order: list[str],
+    surf_tags: list[int],
+    out_map: list[list[tuple[int, int]]],
+    tiles_by_shell: dict[str, set[int]],
+) -> None:
+    """Prove the STEP-face -> OCC-surface correspondence, or refuse.
+
+    Exactly one thing here is a guess. The name of a shell and the faces it owns
+    are read straight out of ``SHELL_BASED_SURFACE_MODEL`` -> ``OPEN_SHELL``,
+    with nothing to get wrong. The guess is that **OCC imports surfaces in STEP
+    face order**, so that imported surface *i* is ``face_ids[i]``. That is
+    deterministic, but assuming it silently is how this module got its zones
+    wrong the first time.
+
+    The check is **per face**, not per shell. A shell's tiles must lie inside
+    that shell's own control-point box is far too weak: ``HALF`` and ``QUARTER``
+    in ``test_fin_2.step`` have byte-identical hulls, so a per-shell test has no
+    power between exactly the pair whose ELSETs the old x-range mask collapsed.
+    Per face it separates them by 122 mm. Measured on this STEP, per face:
+
+        correct order                 0.0000 mm overhang
+        HALF/QUARTER faces swapped  122.4899
+        rotated by one              674.9239
+        reversed                    997.4138
+        HEAL/TIP faces swapped     1002.2619
+        200 random permutations     200/200 caught
+
+    Containment is a superset property, but only once the hull is inflated by
+    any radius under the face: ``_collect_points`` sees ``CARTESIAN_POINT``s
+    only, and a circle or cylinder carries its extent in a radius, so the raw
+    point hull can be *tighter* than the face. ``face_hulls_mm`` inflates for
+    that. Note this STEP has **no B-splines at all** -- 17 planes and 4
+    cylinders, bounded by 69 lines and 8 ellipses -- so the convex-hull property
+    of a B-spline, which an earlier version of this docstring cited, is not what
+    makes the check sound here.
+
+    The tolerance is ``max(rel * span, _HULL_PAD_MM)`` because gmsh pads every
+    bounding box by a fixed absolute 1e-7; a purely relative budget refuses a
+    correctly ordered STEP of a part under 100 mm.
+
+    Second, weaker check: OCC labels, where they exist. ``OCCImportLabels``
+    carries only 2 of this file's 6 names and pins them to coincident faces from
+    other shells too, so it is read one way only -- a labelled tag's tiles must
+    sit inside the tiles of the shell it names.
+
+    Deliberately absent: **area conservation across ``fragment``**. It reads
+    like the natural invariant and it is a tautology -- ``fragment`` conserves
+    area, so every block partition passes it, including a HEAL/TIP swap, at
+    ``rel = 0.000e+00``. Do not add it back believing it tests something.
+    """
+    for index, fid in enumerate(face_ids):
+        hull = face_hulls[fid]
+        span = max(
+            hull[3] - hull[0], hull[4] - hull[1], hull[5] - hull[2], 1.0
+        )
+        overhang = 0.0
+        for _dim, tag in out_map[index]:
+            box = tile_bbox[tag]
+            for axis in (0, 1, 2):
+                overhang = max(
+                    overhang, hull[axis] - box[axis], box[axis + 3] - hull[axis + 3]
+                )
+        if overhang > max(_HULL_TOL_REL * span, _HULL_PAD_MM):
+            raise GeometryError(
+                f"imported surface {surf_tags[index]} was matched to STEP face "
+                f"#{fid} (shell {face_order[index]!r}), but its tiles stick "
+                f"{overhang:.4g} mm outside that face's own control-point hull. "
+                "OCC did not import the faces in STEP order, so every zone in "
+                "this mesh is suspect. Re-export the STEP, or map the names by "
+                "hand."
+            )
+
+    for index, tag in enumerate(surf_tags):
+        label = labels.get(tag, "")
+        if not label or label not in tiles_by_shell:
+            continue
+        got = {t for _dim, t in out_map[index]}
+        if not got <= tiles_by_shell[label]:
+            raise GeometryError(
+                f"OCC labelled surface {tag} as {label!r}, but STEP face order "
+                f"assigned it to {face_order[index]!r}; its tiles "
+                f"{sorted(got)} are not within {label!r}'s "
+                f"{sorted(tiles_by_shell[label])}"
+            )
+
+
+#: A meshed zone under-measures a curved CAD face by chordal error -- on
+#: test_fin_2.step the worst is 0.007%, all of it in one 4.8 mm curved band. 1%
+#: leaves that alone while catching a tile the mesher failed to fill.
+_ZONE_AREA_TOL_REL = 0.01
+
+
+def _check_zone_areas(
+    elsets: dict[str, tuple[int, ...]],
+    cad_area: dict[str, float],
+    element_area: dict[int, float],
+) -> None:
+    """Elements must cover the tiles their zone was built from.
+
+    **This does not check the name-to-tile assignment**, and an earlier version
+    of this docstring claimed it did. Both sides are keyed off the same tile
+    set: ``cad_area[z]`` sums the tiles assigned to ``z`` and ``elsets[z]`` is
+    the elements meshed on those same tiles, so permuting the assignment moves
+    both together and the test passes. That is the same tautology as area
+    conservation across ``fragment``, reproduced one level up. Alignment is
+    checked per face in ``_check_alignment``; that is the only thing that
+    checks it.
+
+    What this does catch is a mesh that failed to fill its geometry -- a tile
+    that produced no elements, or far too few -- which is a real failure mode
+    here and one ccx would solve without complaint. Keep it for that, and do
+    not read it as a statement about zones.
+    """
+    for name, area in sorted(cad_area.items()):
+        meshed = sum(element_area[e] for e in elsets.get(name, ()))
+        if area <= 0.0:
+            raise GeometryError(f"zone {name!r} has non-positive CAD area {area:g}")
+        rel = abs(meshed - area) / area
+        if rel > _ZONE_AREA_TOL_REL:
+            raise GeometryError(
+                f"zone {name!r} meshes to {meshed:.4g} mm^2 but its CAD faces "
+                f"cover {area:.4g} mm^2 ({rel:.2%} off). The elements assigned "
+                "to this zone are not the ones the named shell covers"
+            )
+
+
+def zone_report(mesh: Mesh) -> list[dict[str, float | int | str]]:
+    """Per-zone element count, area and extent -- look before you solve.
+
+    The point is that a zone you drew in CAD and a zone the deck actually
+    carries are different objects, and the only cheap way to know they agree is
+    to read the areas off. ``blade`` is included: every other zone is a subset
+    of it.
+    """
+    areas = mesh.element_areas()
+    rows: list[dict[str, float | int | str]] = []
+    for name in sorted(mesh.elsets, key=lambda n: (-len(mesh.elsets[n]), n)):
+        eids = mesh.elsets[name]
+        pts = [mesh.nodes[n] for e in eids for n in mesh.elements[e]]
+        rows.append(
+            {
+                "zone": name,
+                "elements": len(eids),
+                "area_mm2": sum(areas[e] for e in eids),
+                "x_min_mm": min(p[0] for p in pts),
+                "x_max_mm": max(p[0] for p in pts),
+                "y_min_mm": min(p[1] for p in pts),
+                "y_max_mm": max(p[1] for p in pts),
+            }
+        )
+    return rows
 
 
 def _sanitize_elset(name: str) -> str:
@@ -107,7 +438,7 @@ def mesh_step(
     step_path: str | Path,
     *,
     size_mm: float = 40.0,
-    coverage_tol_mm: float = 2.0,
+    coverage_tol_mm: float | None = None,
     clamp_coverage: str | None = "HEAL",
     quad_floor: float = 0.98,
     heading: str = "",
@@ -123,6 +454,14 @@ def mesh_step(
     tiles so ply drops get mesh edges. Coverage ELSETs are ACP-style masks:
     an element may belong to several (e.g. FULL and HALF and HEAL).
 
+    Membership is **exact**: each named shell's faces are followed through the
+    ``fragment`` map to the tiles they became, and an element belongs to a zone
+    if its tile does. There is no geometric tolerance in that decision. It used
+    to be a centroid-in-x-range test against the shell's control-point hull,
+    which on ``test_fin_2.step`` gave ``HALF`` and ``QUARTER`` identical ELSETs
+    and made ``TIP`` 2.5x too large -- see ``cases/step_fin/README.md``.
+    ``coverage_tol_mm`` is therefore dead and warns if passed.
+
     Tip drive set (``far_face``) is the maximum-x boundary edge (fin span
     along +x). Clamp set (``fixed_end``) defaults to every node under the
     ``HEAL`` coverage mask; pass ``clamp_coverage=None`` to fall back to the
@@ -134,27 +473,83 @@ def mesh_step(
     if not (math.isfinite(size_mm) and size_mm > 0):
         raise GeometryError(f"size_mm must be positive, got {size_mm}")
 
-    ranges = shell_x_ranges_mm(step_path)
-    coverages = {name: _sanitize_elset(name) for name in ranges}
+    if coverage_tol_mm is not None:
+        warnings.warn(
+            "coverage_tol_mm no longer does anything: zone membership comes "
+            "from the OCC fragment map, not from a centroid-in-range test",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    faces_by_shell = shell_faces(step_path)
+    face_hulls = face_hulls_mm(step_path)
+    coverages = {name: _sanitize_elset(name) for name in faces_by_shell}
+    if len(set(coverages.values())) != len(coverages):
+        raise GeometryError(
+            f"shell names collide after sanitizing for ccx: {coverages}"
+        )
+    # Faces in ascending STEP entity id, which is the order OCC imports them in
+    # -- the one assumption in this module, checked in _check_alignment.
+    _by_id = sorted(
+        (fid, name) for name, fids in faces_by_shell.items() for fid in fids
+    )
+    face_ids = [fid for fid, _name in _by_id]
+    face_order = [name for _fid, name in _by_id]
 
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     try:
         gmsh.model.add("step_mesh")
+        # Labels are partial -- OCC carries only some STEP names and pins them
+        # to coincident faces from other shells too -- so they are a check in
+        # _check_alignment, never the mapping.
+        gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
         gmsh.model.occ.importShapes(str(step_path.resolve()))
         gmsh.model.occ.synchronize()
         surfs = gmsh.model.getEntities(2)
         if len(surfs) < 1:
             raise GeometryError(f"no surfaces in {step_path}")
+        if len(surfs) != len(face_order):
+            raise GeometryError(
+                f"{step_path.name} declares {len(face_order)} faces across "
+                f"{len(faces_by_shell)} named shells but OCC imported "
+                f"{len(surfs)} surfaces; the face-to-surface correspondence "
+                "zone membership depends on cannot be established"
+            )
+        surf_tags = [tag for _dim, tag in surfs]
+        labels = {
+            tag: gmsh.model.getEntityName(2, tag).rsplit("/", 1)[-1]
+            for tag in surf_tags
+        }
 
         # Imprint overlapping shells: creates vertices along ply-drop curves.
+        # out_map is parallel to objects+tools and carries the face -> tile
+        # correspondence that every zone ELSET is built from.
         if len(surfs) > 1:
-            gmsh.model.occ.fragment([surfs[0]], list(surfs[1:]))
+            _out, out_map = gmsh.model.occ.fragment([surfs[0]], list(surfs[1:]))
             gmsh.model.occ.synchronize()
+        else:
+            out_map = [[surfs[0]]]
 
         tiles = gmsh.model.getEntities(2)
         if not tiles:
             raise GeometryError("fragment left no surfaces to mesh")
+
+        tiles_by_shell = _tiles_by_shell(face_order, out_map)
+        _check_alignment(
+            face_ids,
+            face_hulls,
+            {tag: gmsh.model.getBoundingBox(2, tag) for _dim, tag in tiles},
+            labels,
+            face_order,
+            surf_tags,
+            out_map,
+            tiles_by_shell,
+        )
+        shells_by_tile: dict[int, set[str]] = {}
+        for name, tile_tags in tiles_by_shell.items():
+            for tag in tile_tags:
+                shells_by_tile.setdefault(tag, set()).add(coverages[name])
 
         for _dim, _tag in tiles:
             gmsh.model.mesh.setRecombine(2, _tag)
@@ -218,16 +613,10 @@ def mesh_step(
         for tag, rows in sorted(tile_elems.items()):
             for row in rows:
                 mapped = tuple(renumber[n] for n in row)
-                # Element centroid (corners only) vs each shell x-span.
-                corners = _corners(mapped)
-                cx = sum(nodes[n][0] for n in corners) / len(corners)
-                names = {
-                    coverages[name]
-                    for name, (x0, x1) in ranges.items()
-                    if x0 - coverage_tol_mm <= cx <= x1 + coverage_tol_mm
-                }
+                # Exact: the element inherits the zones of the tile it was
+                # meshed on. No centroid, no tolerance, no bounding box.
                 elements[next_eid] = mapped
-                elem_coverage[next_eid] = set(names)
+                elem_coverage[next_eid] = set(shells_by_tile.get(tag, ()))
                 next_eid += 1
 
         elsets: dict[str, tuple[int, ...]] = {
@@ -244,8 +633,33 @@ def mesh_step(
         missing = [n for n in coverages.values() if n not in elsets]
         if missing:
             raise GeometryError(
-                f"coverage ELSETs empty for {missing}; shell x-ranges were "
-                f"{ {k: (round(v[0],3), round(v[1],3)) for k,v in ranges.items()} }"
+                f"coverage ELSETs empty for {missing}; the named shells "
+                "reached no mesh tile, so those zones would silently carry no "
+                "plies"
+            )
+        _check_zone_areas(
+            elsets,
+            {
+                coverages[name]: sum(
+                    gmsh.model.occ.getMass(2, t) for t in tile_tags
+                )
+                for name, tile_tags in tiles_by_shell.items()
+            },
+            {
+                eid: area
+                for eid, area in Mesh(
+                    nodes=nodes, elements=elements, nsets={}, elsets={}
+                )
+                .element_areas()
+                .items()
+            },
+        )
+        orphans = sorted(e for e, names in elem_coverage.items() if not names)
+        if orphans:
+            raise GeometryError(
+                f"{len(orphans)} elements (e.g. {orphans[:5]}) lie on a tile "
+                "that no named shell covers, so no ply reaches them. Every "
+                "element must be inside at least the outermost shell"
             )
 
         # Tip = free tip edge at xmax. Clamp = all nodes under clamp_coverage
@@ -288,7 +702,7 @@ def mesh_step(
             f"STEP import {step_path.name}: {len(elements)} S8R, "
             f"coverages {sorted(coverages.values())}; "
             f"clamp={'mask '+clamp_name if clamp_name else 'xmin edge'}, "
-            "tip=xmax edge; nested ACP masks via OCC fragment imprint"
+            "tip=xmax edge; zones from the OCC fragment map (exact)"
         )
         mesh = Mesh(
             nodes=nodes,
