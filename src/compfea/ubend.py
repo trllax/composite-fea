@@ -23,14 +23,24 @@ from compfea.metrics import f_spring
 DEFAULT_STEP_DEG = 5.0
 DEFAULT_START_DEG = 5.0
 DEFAULT_END_DEG = 180.0
-# Calibrated, not guessed: results/incr-calib solved [0/90]s at max increments
-# 0.02 / 0.05 / 0.1 / 0.25 / 0.5 and got bit-identical f_90 and f_180 (deviation
-# 0.00e+00) at 1.00x .. 5.43x speed. A converged elastic equilibrium does not
-# depend on the increment path, so the old 0.02 cap bought nothing but time: it
-# forced 53 increments per angle step where ccx wanted 8. 0.25 leaves the cap
-# non-binding while keeping a ceiling in reserve for stiffer designs; ccx cuts
-# back on its own if a step turns out to be hard.
-DEFAULT_STATIC_LINE = "0.05, 1.0, 1.E-8, 0.25"
+# Calibrated, not guessed, and now on more than one design. results/incr-calib
+# solved [0/90]s at max increments 0.02 / 0.05 / 0.1 / 0.25 / 0.5 and got
+# bit-identical f_90 and f_180 (deviation 0.00e+00) at 1.00x .. 5.43x speed. A
+# converged elastic equilibrium does not depend on the increment path, so a
+# tight cap buys nothing but time.
+#
+# 0.25 was held back from 0.5 as "a ceiling in reserve for stiffer designs".
+# results/incr-calib-thick tested that reservation directly -- [0/90]_2s and
+# [0/90]_3s (8 and 12 plies) at 0.1 / 0.25 / 0.5 -- and the forces are again
+# bit-identical, so the reserve was not buying anything within the strip's
+# design range. 0.5 is 1.12x faster at 4 plies and 1.25x at 8, where it matters
+# more because those solves are the slow ones.
+#
+# This cap is geometry-specific, not universal: cases/step_fin measures the fin
+# diverging even at 0.25, and it carries its own FIN_STATIC_LINE. Re-calibrate
+# before reusing this on a different part; ccx cuts back on its own within a
+# step, but it cannot rescue a cap that is too coarse to start.
+DEFAULT_STATIC_LINE = "0.1, 1.0, 1.E-8, 0.5"
 DEFAULT_INC = 8000
 
 
