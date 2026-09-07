@@ -417,3 +417,39 @@ def test_abd_and_the_deck_share_one_angle_convention(long_axis):
         # a x b = +z, so the in-plane pair is right-handed for both axes and
         # qbar's rotation about +z is the same rotation the deck describes.
         assert np.cross(a, b)[2] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_balance_checks_A26_as_well_as_A16():
+    """They are independent, and nothing separated them.
+
+    Dropping either term from is_balanced left the whole file green, because
+    every stack here happened to move both together. These two do not: each
+    nulls one term exactly and leaves the other at 41% of the membrane
+    stiffness, so the stack is unbalanced through one term only. Thicknesses
+    are solved for rather than written down, so the null stays exact if the
+    material constants ever change.
+    """
+    t1 = 0.2
+
+    def solve(a1, a2, row):
+        """t2 making A[row, 2] vanish for [a1(t1) / a2(t2)]."""
+        return -t1 * qbar(UD_CFRP_GENERIC, a1)[row, 2] / qbar(
+            UD_CFRP_GENERIC, a2
+        )[row, 2]
+
+    # A16 == 0 exactly, A26 large: fails only if A26 is checked.
+    a, _b, _d = abd(
+        ZoneLayup("b", (Ply(t1, -30.0), Ply(solve(-30.0, 60.0, 0), 60.0))), MATS
+    )
+    assert a[0, 2] == pytest.approx(0.0, abs=1e-9)
+    assert abs(a[1, 2]) / max(a[0, 0], a[1, 1]) > 0.4
+    assert not is_balanced(a)
+
+    # The mirror image about 45 degrees, which swaps the roles of 1 and 2:
+    # A26 == 0 exactly, A16 large. Fails only if A16 is checked.
+    b, _bb, _dd = abd(
+        ZoneLayup("b", (Ply(t1, 120.0), Ply(solve(120.0, 30.0, 1), 30.0))), MATS
+    )
+    assert b[1, 2] == pytest.approx(0.0, abs=1e-9)
+    assert abs(b[0, 2]) / max(b[0, 0], b[1, 1]) > 0.4
+    assert not is_balanced(b)

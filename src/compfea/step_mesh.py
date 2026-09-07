@@ -39,9 +39,28 @@ _STEP_M_TO_MM = 1000.0
 _SHELL_MODEL = "SHELL_BASED_SURFACE_MODEL"
 _CARTESIAN_POINT = "CARTESIAN_POINT"
 
-#: Hull containment is exact on a correct assignment (measured overhang 0.0),
-#: so this only absorbs float noise in the bbox, not a modelling tolerance.
+#: gmsh pads every OCC bounding box by a **fixed, absolute** 1e-7 model units --
+#: measured identical on rectangles of 1, 10, 100 and 1000 mm. So a purely
+#: relative budget is wrong: 1e-9 * span alone passes only where a face spans
+#: more than 100 mm, and a correctly ordered STEP of a part ten times smaller
+#: than test_fin_2 is refused. The absolute floor is that pad with a decade of
+#: margin; the relative term carries large parts where float noise scales.
+_HULL_PAD_MM = 1e-6
 _HULL_TOL_REL = 1e-9
+
+#: Entity types whose extent is a radius rather than a CARTESIAN_POINT, with the
+#: number of leading numeric arguments that are lengths. A face bounded by one
+#: of these reaches up to that radius away from any point recorded for it, so
+#: the point hull alone is NOT a superset -- see _collect_extent.
+_RADIUS_ARGS = {
+    "CIRCLE": 1,
+    "ELLIPSE": 2,
+    "CYLINDRICAL_SURFACE": 1,
+    "CONICAL_SURFACE": 1,
+    "SPHERICAL_SURFACE": 1,
+    "TOROIDAL_SURFACE": 2,
+    "DEGENERATE_TOROIDAL_SURFACE": 2,
+}
 
 
 def _parse_step_entities(text: str) -> dict[int, tuple[str, str]]:
@@ -70,6 +89,35 @@ def _collect_points(
     for ref in re.findall(r"#(\d+)", arg):
         pts.extend(_collect_points(ents, int(ref), seen))
     return pts
+
+
+def _collect_radii(
+    ents: dict[int, tuple[str, str]], eid: int, seen: set[int] | None = None
+) -> float:
+    """Largest radius-like length anywhere under ``eid``, in STEP units.
+
+    ``_collect_points`` sees only ``CARTESIAN_POINT``s, and for a circle,
+    ellipse or cylinder the extent lives in a **radius**, not a point. A face
+    bounded by a full circle records its centre and nothing else, so its point
+    hull is a degenerate segment -- tighter than the face, not a superset.
+    Inflating every hull by the largest radius under it restores the superset
+    property conservatively.
+    """
+    if seen is None:
+        seen = set()
+    if eid in seen or eid not in ents:
+        return 0.0
+    seen.add(eid)
+    typ, arg = ents[eid]
+    radius = 0.0
+    count = _RADIUS_ARGS.get(typ)
+    if count:
+        numbers = re.findall(r"(?<![#\w.])(-?\d+\.\d*(?:[eE][-+]?\d+)?)", arg)
+        for value in numbers[:count]:
+            radius = max(radius, abs(float(value)))
+    for ref in re.findall(r"#(\d+)", arg):
+        radius = max(radius, _collect_radii(ents, int(ref), seen))
+    return radius
 
 
 def shell_faces(step_path: str | Path) -> dict[str, tuple[int, ...]]:
@@ -155,7 +203,19 @@ def face_hulls_mm(step_path: str | Path) -> dict[int, tuple[float, ...]]:
     check. Two shells can share a hull exactly -- ``HALF`` and ``QUARTER`` in
     ``test_fin_2.step`` do, to the last digit -- so a per-shell containment test
     has no power between them, which is the pair that caused the original zone
-    bug. Their individual faces do not share hulls.
+    bug.
+
+    Their individual faces do not all differ either: three of ``QUARTER``'s
+    hulls match three of ``HALF``'s exactly. What makes the per-face check
+    sufficient is not that every face is distinguishable, but that **every
+    swap it cannot see moves no element**: of the 210 pairwise face swaps on
+    this STEP, 27 pass, and in all 27 the two faces fragment to identical tile
+    sets, so no ELSET changes. Zero harmful misses, and 0/2000 random
+    permutations missed. ``tests/test_step_mesh.py`` asserts that property
+    rather than the distinguishability it does not have.
+
+    The box is inflated by any radius under the face -- see ``_collect_radii``,
+    without which this is not a superset and refuses valid geometry.
     """
     ents = _parse_step_entities(Path(step_path).read_text())
     wanted: set[int] = set()
@@ -171,9 +231,10 @@ def face_hulls_mm(step_path: str | Path) -> dict[int, tuple[float, ...]]:
         if not pts:
             raise GeometryError(f"STEP face #{fid} has no CARTESIAN_POINT data")
         cols = [[p[k] * _STEP_M_TO_MM for p in pts] for k in (0, 1, 2)]
+        grow = _collect_radii(ents, fid) * _STEP_M_TO_MM
         out[fid] = (
-            min(cols[0]), min(cols[1]), min(cols[2]),
-            max(cols[0]), max(cols[1]), max(cols[2]),
+            min(cols[0]) - grow, min(cols[1]) - grow, min(cols[2]) - grow,
+            max(cols[0]) + grow, max(cols[1]) + grow, max(cols[2]) + grow,
         )
     return out
 
@@ -237,8 +298,18 @@ def _check_alignment(
         HEAL/TIP faces swapped     1002.2619
         200 random permutations     200/200 caught
 
-    Containment is a superset property -- a B-spline face lies inside its
-    control points -- so it cannot false-alarm.
+    Containment is a superset property, but only once the hull is inflated by
+    any radius under the face: ``_collect_points`` sees ``CARTESIAN_POINT``s
+    only, and a circle or cylinder carries its extent in a radius, so the raw
+    point hull can be *tighter* than the face. ``face_hulls_mm`` inflates for
+    that. Note this STEP has **no B-splines at all** -- 17 planes and 4
+    cylinders, bounded by 69 lines and 8 ellipses -- so the convex-hull property
+    of a B-spline, which an earlier version of this docstring cited, is not what
+    makes the check sound here.
+
+    The tolerance is ``max(rel * span, _HULL_PAD_MM)`` because gmsh pads every
+    bounding box by a fixed absolute 1e-7; a purely relative budget refuses a
+    correctly ordered STEP of a part under 100 mm.
 
     Second, weaker check: OCC labels, where they exist. ``OCCImportLabels``
     carries only 2 of this file's 6 names and pins them to coincident faces from
@@ -262,7 +333,7 @@ def _check_alignment(
                 overhang = max(
                     overhang, hull[axis] - box[axis], box[axis + 3] - hull[axis + 3]
                 )
-        if overhang > _HULL_TOL_REL * span:
+        if overhang > max(_HULL_TOL_REL * span, _HULL_PAD_MM):
             raise GeometryError(
                 f"imported surface {surf_tags[index]} was matched to STEP face "
                 f"#{fid} (shell {face_order[index]!r}), but its tiles stick "

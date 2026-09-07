@@ -56,8 +56,8 @@ DENSITY_TO_TONNE_PER_MM3: dict[str, float] = {
 #: Note what catches what. A file left in Pa lands at 1e11 and blows the ceiling
 #: on every field. A file left in **GPa** is caught by the transverse and shear
 #: moduli -- E2 at 9 and G23 at 3 are both under the floor -- and *not* by E1,
-#: which lands at 121 and sits comfortably inside the band. The floor stays at
-#: 100 rather than rising to catch E1 too, because a matrix-dominated G23 is
+#: which for the shipped cfrp lands at 135 and sits well inside the band. The
+#: floor stays at 100 rather than rising to catch E1 too, because a G23 is
 #: legitimately a few thousand MPa and a tighter floor would start refusing real
 #: laminae. Every field is checked, so the GPa case is caught either way.
 MODULUS_BAND_MPA = (100.0, 600_000.0)

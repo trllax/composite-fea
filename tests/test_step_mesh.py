@@ -251,7 +251,7 @@ def alignment_inputs():
     """Everything _check_alignment needs, taken from the real STEP."""
     import gmsh
 
-    from compfea.step_mesh import _sanitize_elset, _tiles_by_shell, face_hulls_mm
+    from compfea.step_mesh import _tiles_by_shell, face_hulls_mm
 
     faces = shell_faces(FIN2)
     by_id = sorted((f, n) for n, ids in faces.items() for f in ids)
@@ -283,9 +283,9 @@ def alignment_inputs():
         "face_order": names,
         "surf_tags": tags,
         "out_map": out_map,
-        "tiles_by_shell": _tiles_by_shell(
-            [_sanitize_elset(n) for n in names], out_map
-        ),
+        # Raw shell names, as mesh_step passes them -- not sanitized. The
+        # label check compares against OCC's own names, which are raw.
+        "tiles_by_shell": _tiles_by_shell(names, out_map),
     }
 
 
@@ -320,10 +320,142 @@ def test_check_alignment_refuses_a_misordered_import(mutate, label):
 
 def test_half_and_quarter_share_a_hull_so_per_shell_containment_is_blind():
     """Why the guard is per face. If this ever stops being true, say so."""
-    hulls = shell_hulls_mm(FIN2)
-    assert hulls["HALF"] == hulls["QUARTER"]
-    faces = shell_faces(FIN2)
     from compfea.step_mesh import face_hulls_mm
 
-    fh = face_hulls_mm(FIN2)
-    assert {fh[f] for f in faces["HALF"]} != {fh[f] for f in faces["QUARTER"]}
+    hulls = shell_hulls_mm(FIN2)
+    assert hulls["HALF"] == hulls["QUARTER"]
+    # Per face does NOT make them all distinguishable: three of QUARTER's
+    # hulls equal three of HALF's exactly. Stated so the next reader does not
+    # believe the stronger claim, which an earlier docstring made.
+    faces, fh = shell_faces(FIN2), face_hulls_mm(FIN2)
+    shared = {fh[f] for f in faces["HALF"]} & {fh[f] for f in faces["QUARTER"]}
+    assert len(shared) == 3
+
+
+def test_every_swap_the_guard_cannot_see_moves_no_element():
+    """The property that actually makes the per-face check sufficient.
+
+    Not "every face has a distinct hull" -- 27 of the 210 pairwise face swaps
+    on this STEP pass the guard. What matters is that in every one of those the
+    two faces fragment to the same tiles, so the swap changes no ELSET and no
+    ply lands anywhere different. Harmful misses must be zero.
+    """
+    import itertools
+
+    from compfea.geometry import GeometryError
+    from compfea.step_mesh import _check_alignment
+
+    inputs = alignment_inputs()
+    tiles = [frozenset(t for _d, t in blk) for blk in inputs["out_map"]]
+    base = list(inputs["face_ids"])
+    harmless = harmful = 0
+    for i, j in itertools.combinations(range(len(base)), 2):
+        swapped = list(base)
+        swapped[i], swapped[j] = swapped[j], swapped[i]
+        probe = dict(inputs, face_ids=swapped)
+        try:
+            _check_alignment(**probe)
+        except GeometryError:
+            continue
+        if tiles[i] == tiles[j]:
+            harmless += 1
+        else:
+            harmful += 1
+    assert harmful == 0, f"{harmful} undetected swaps move elements"
+    assert harmless == 27
+
+
+def test_the_guard_does_not_refuse_a_small_part():
+    """gmsh pads every bbox by an absolute 1e-7, so the budget needs a floor.
+
+    With a purely relative tolerance the check passes only where a face spans
+    more than 100 mm, and refuses a correctly ordered STEP of anything smaller.
+    Rescaling the fin by 0.1 -- smallest face span 27.4 mm -- reproduced that.
+    Simulated here rather than shipping a second STEP: a 27 mm face whose tile
+    overhangs by exactly gmsh's pad.
+    """
+    from compfea.step_mesh import _check_alignment
+
+    span, pad = 27.4, 1e-7
+    _check_alignment(
+        face_ids=[1],
+        face_hulls={1: (0.0, 0.0, 0.0, span, span, 0.0)},
+        tile_bbox={9: (-pad, -pad, -pad, span + pad, span + pad, pad)},
+        labels={7: ""},
+        face_order=["FULL"],
+        surf_tags=[7],
+        out_map=[[(2, 9)]],
+        tiles_by_shell={"FULL": {9}},
+    )
+
+
+def test_a_face_bounded_by_a_circle_is_not_a_degenerate_hull():
+    """_collect_points sees no radius, so the raw point hull is not a superset.
+
+    A disc bounded by one full CIRCLE records its centre and nothing else. Read
+    literally that is a point, tighter than the face, and every tile of it would
+    overhang -- a guaranteed false refusal on valid geometry.
+    """
+    from compfea.step_mesh import _collect_radii, _parse_step_entities
+
+    step = (
+        "#1=CARTESIAN_POINT('',(0.,0.,0.));\n"
+        "#2=DIRECTION('',(0.,0.,1.));\n"
+        "#3=DIRECTION('',(1.,0.,0.));\n"
+        "#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);\n"
+        "#5=CIRCLE('',#4,0.5);\n"
+    )
+    ents = _parse_step_entities(step)
+    assert _collect_radii(ents, 5) == pytest.approx(0.5)
+    # ...and the fin's own cylinders and ellipses are picked up too.
+    fin = _parse_step_entities(FIN2.read_text())
+    grown = [f for f in shell_faces(FIN2)["FULL"] if _collect_radii(fin, f) > 0]
+    assert grown, "the fin has cylindrical faces; their hulls must inflate"
+
+
+def test_the_occ_label_branch_refuses_a_contradiction():
+    """The second half of _check_alignment, which face_ids mutations cannot reach.
+
+    Permuting face_ids only moves the hull test; the label test reads
+    face_order and tiles_by_shell. Without a case aimed at it, no-oping the
+    branch left the whole suite green.
+    """
+    from compfea.step_mesh import _check_alignment
+
+    common = dict(
+        face_ids=[1],
+        face_hulls={1: (0.0, 0.0, 0.0, 100.0, 100.0, 0.0)},
+        tile_bbox={9: (0.0, 0.0, 0.0, 100.0, 100.0, 0.0)},
+        face_order=["FULL"],
+        surf_tags=[7],
+        out_map=[[(2, 9)]],
+    )
+    # OCC says surface 7 is TIP; STEP order says FULL, and TIP does not own
+    # tile 9. That is a genuine contradiction and must be refused.
+    with pytest.raises(GeometryError, match="not within"):
+        _check_alignment(
+            **common, labels={7: "TIP"}, tiles_by_shell={"FULL": {9}, "TIP": {8}}
+        )
+    # Same shape, but TIP does own tile 9 -- coincident faces, so it agrees.
+    _check_alignment(
+        **common, labels={7: "TIP"}, tiles_by_shell={"FULL": {9}, "TIP": {9}}
+    )
+    # An unlabelled surface says nothing either way.
+    _check_alignment(
+        **common, labels={7: ""}, tiles_by_shell={"FULL": {9}, "TIP": {8}}
+    )
+
+
+def test_check_zone_areas_catches_a_tile_the_mesher_failed_to_fill():
+    """The one job that function actually has, per its corrected docstring.
+
+    It does NOT check the zone assignment -- both sides key off the same tile
+    set. Kept because a tile that meshed short leaves a hole ccx would solve.
+    """
+    from compfea.step_mesh import _check_zone_areas
+
+    _check_zone_areas({"z": (1, 2)}, {"z": 100.0}, {1: 50.0, 2: 50.0})
+    with pytest.raises(GeometryError, match="off"):
+        _check_zone_areas({"z": (1,)}, {"z": 100.0}, {1: 50.0, 2: 50.0})
+    with pytest.raises(GeometryError, match="non-positive"):
+        _check_zone_areas({"z": (1,)}, {"z": 0.0}, {1: 50.0})
