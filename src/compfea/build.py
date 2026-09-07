@@ -68,7 +68,12 @@ def layup_fingerprint(
     materials: dict[str, MaterialRecord] | None = None,
     long_axis: str = "",
 ) -> str:
-    """Hash of the **resolved** stacks, for caching.
+    """Hash of the **resolved laminate** -- stacks, cards, and the long axis.
+
+    Covers everything that changes ``layup.to_inp()`` and nothing else. It is
+    **not** a deck key: the mesh is not in it, so a cache keyed on this alone
+    would serve a result computed on a different STEP or a different
+    ``size_mm``. ``build.json`` records those separately; a cache wants both.
 
     Deliberately not the ply book's path or mtime: a moved file must still hit
     cache, and an edited thickness must miss it.

@@ -259,3 +259,52 @@ def test_a_zone_with_no_ply_of_its_own_is_a_warning_not_a_failure(tmp_path):
     )
     assert any("carry no ply of their own" in w for w in manifest["warnings"])
     assert (tmp_path / "laminate_abd.csv").is_file()
+
+
+def test_the_fingerprint_covers_everything_that_changes_the_layup_text():
+    """Enumerated rather than asserted: perturb each input, the deck text and
+    the key must move together."""
+    from dataclasses import replace
+
+    from compfea.layup import Layup, Ply, ZoneLayup
+    from compfea.materials import load_materials
+
+    library = load_materials(GENERIC)
+
+    def make(*, angle=0.0, thickness=0.15, material="cfrp", axis="x", lib=library):
+        layup = Layup(
+            materials=(lib[material].constants,),
+            zones=(ZoneLayup("cov_1", (Ply(thickness, angle, material),)),),
+            long_axis=axis,
+        )
+        rows = [{"zone": "cov_1", "ply": 1, "material": material,
+                 "angle_deg": angle, "thickness_mm": thickness}]
+        return layup.to_inp(), layup_fingerprint(rows, lib, axis)
+
+    base_text, base_key = make()
+    bumped = dict(library)
+    card = library["cfrp"].constants
+    bumped["cfrp"] = replace(
+        library["cfrp"], constants=replace(card, e1=card.e1 * 2)
+    )
+    for label, kwargs in (
+        ("angle", {"angle": 45.0}),
+        ("thickness", {"thickness": 0.16}),
+        ("material", {"material": "cfrp_woven"}),
+        ("long_axis", {"axis": "y"}),
+        ("modulus", {"lib": bumped}),
+    ):
+        text, key = make(**kwargs)
+        assert text != base_text, f"{label} must change the deck text"
+        assert key != base_key, f"{label} changes the deck but not the key"
+
+
+def test_float_repr_round_trips_so_the_key_is_exact():
+    """repr() is the shortest string that reads back identically, since 3.1."""
+    from compfea.materials import load_materials
+
+    for record in load_materials(GENERIC).values():
+        card = record.constants
+        for field in ("e1", "e2", "e3", "nu12", "g12", "density"):
+            value = getattr(card, field)
+            assert float(repr(value)) == value, f"{card.name}.{field}"
