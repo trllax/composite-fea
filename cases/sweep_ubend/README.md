@@ -154,6 +154,36 @@ tail -n 40 results/<run_id>/sweep.log
 Results: `results/<run_id>/results.csv` (and `.parquet`) with `f_90`, `f_180`,
 `f_ratio_180_90`, `max_linearity_dev`, and the per-design identity columns.
 
+## Solver increments: calibrated on three thicknesses
+
+The `*STATIC` max increment dominates runtime -- it sets a floor on increments
+per angle step -- and buys nothing here. Two studies, both on disk:
+
+| study | designs | max increments tested | force spread |
+| --- | --- | --- | --- |
+| `results/incr-calib` | `[0/90]s` (4 plies) | 0.02 / 0.05 / 0.1 / 0.25 / 0.5 | **0.00e+00** |
+| `results/incr-calib-thick` | `[0/90]_2s`, `[0/90]_3s` (8, 12 plies) | 0.1 / 0.25 / 0.5 | **0.00e+00** |
+
+Bit-identical `f_90` and `f_180` in every case. A converged elastic equilibrium
+does not depend on the path taken to reach it, so the only thing a tight cap
+buys is increments.
+
+The default was `0.25`, held one notch back from `0.5` as a ceiling in reserve
+for stiffer designs. The second study tested that reservation directly and found
+nothing behind it, so the default is now `0.1, 1.0, 1.E-8, 0.5` -- 1.12x faster
+at 4 plies and 1.25x at 8, where it matters more because those solves are slower
+to begin with.
+
+**This does not transfer between parts.** `cases/step_fin` measures the fin
+diverging even at 0.25 and carries its own `FIN_STATIC_LINE`. Sweep the cap and
+compare forces before adopting one on new geometry; `--static-line` takes several
+values and `compfea-sweep-post` reports such a run as a calibration rather than a
+design comparison.
+
+Changing the cap changes the cache key, so existing cached solves are not reused
+across the change. Results already on disk stay valid -- every row records the
+`static_line` it was solved with.
+
 ## Reading the results
 
 `sweep.py` writes the table; `compfea-sweep-post` turns it into a ranking.

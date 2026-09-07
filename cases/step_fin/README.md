@@ -130,7 +130,8 @@ mesh convergence, not on triangle avoidance -- that study has not been done.
 
 ## Solver increments: the strip's calibration does not transfer
 
-The sweep's `DEFAULT_STATIC_LINE` (max 0.25) **diverges on the fin**. Measured
+The sweep's `DEFAULT_STATIC_LINE` (max 0.5, and 0.25 when this was measured)
+**diverges on the fin**. Measured
 here at 40 mm with 1-degree steps, minimum increment held at `1.E-10`:
 
 | max increment | result |
