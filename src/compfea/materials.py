@@ -51,8 +51,15 @@ DENSITY_TO_TONNE_PER_MM3: dict[str, float] = {
 
 #: Plausible modulus band in MPa. Basalt UD sits near 45 GPa at the bottom and
 #: M60J-class carbon near 588 GPa at the top, so this is wide on purpose: it is
-#: a unit check, not a materials opinion. A file left in Pa lands at 1e11 and a
-#: file left in GPa lands at 121 -- both outside, both caught.
+#: a unit check, not a materials opinion.
+#:
+#: Note what catches what. A file left in Pa lands at 1e11 and blows the ceiling
+#: on every field. A file left in **GPa** is caught by the transverse and shear
+#: moduli -- E2 at 9 and G23 at 3 are both under the floor -- and *not* by E1,
+#: which lands at 121 and sits comfortably inside the band. The floor stays at
+#: 100 rather than rising to catch E1 too, because a matrix-dominated G23 is
+#: legitimately a few thousand MPa and a tighter floor would start refusing real
+#: laminae. Every field is checked, so the GPa case is caught either way.
 MODULUS_BAND_MPA = (100.0, 600_000.0)
 
 #: Plausible density band in tonne/mm^3, i.e. 0.1 to 10 g/cm^3.

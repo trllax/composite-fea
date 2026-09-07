@@ -75,8 +75,12 @@ from compfea.step_mesh import mesh_step
 mesh = mesh_step("test_fin_2.step", size_mm=40)
 ```
 
-Note: in `test_fin_2.step`, `HALF` and `QUARTER` share the same x-span, so
-their ELSETs match until the CAD spans differ.
+Note: in `test_fin_2.step`, `HALF` and `QUARTER` have byte-identical
+control-point hulls — the same in all three axes, not just x. That was written
+here as expected behaviour ("their ELSETs match until the CAD spans differ");
+it was the bug. Their true extents are 450 mm and 300 mm and their ELSETs
+differ by 242 elements. See the section below on how a named shell becomes an
+ELSET.
 
 ## Covered plies -> COMPOSITE
 

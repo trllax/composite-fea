@@ -6,7 +6,7 @@ coverage masks, not exclusive tiles. This module:
 1. Imports all shells via OpenCASCADE
 2. ``fragment``s them so ply-drop boundaries become mesh edges (vertices)
 3. Meshes the unique tiles as second-order incomplete quads (S8R)
-4. Tags each element with every shell whose x-span contains its centroid
+4. Tags each element with every shell whose faces became its tile (exact)
 5. Builds root/tip NSETs from the min/max-x boundary nodes
 
 Units: STEP SI metres are scaled to mm to match the rest of the repo.
@@ -148,6 +148,36 @@ def shell_hulls_mm(step_path: str | Path) -> dict[str, tuple[float, ...]]:
     return out
 
 
+def face_hulls_mm(step_path: str | Path) -> dict[int, tuple[float, ...]]:
+    """``ADVANCED_FACE`` id -> its control-point bounding box in mm.
+
+    Per **face**, not per shell, and that distinction carries the alignment
+    check. Two shells can share a hull exactly -- ``HALF`` and ``QUARTER`` in
+    ``test_fin_2.step`` do, to the last digit -- so a per-shell containment test
+    has no power between them, which is the pair that caused the original zone
+    bug. Their individual faces do not share hulls.
+    """
+    ents = _parse_step_entities(Path(step_path).read_text())
+    wanted: set[int] = set()
+    for _eid, (typ, arg) in ents.items():
+        if typ != _SHELL_MODEL:
+            continue
+        for shell_ref in (int(r) for r in re.findall(r"#(\d+)", arg)):
+            if shell_ref in ents:
+                wanted.update(int(r) for r in re.findall(r"#(\d+)", ents[shell_ref][1]))
+    out: dict[int, tuple[float, ...]] = {}
+    for fid in wanted:
+        pts = _collect_points(ents, fid)
+        if not pts:
+            raise GeometryError(f"STEP face #{fid} has no CARTESIAN_POINT data")
+        cols = [[p[k] * _STEP_M_TO_MM for p in pts] for k in (0, 1, 2)]
+        out[fid] = (
+            min(cols[0]), min(cols[1]), min(cols[2]),
+            max(cols[0]), max(cols[1]), max(cols[2]),
+        )
+    return out
+
+
 def shell_x_ranges_mm(step_path: str | Path) -> dict[str, tuple[float, float]]:
     """Named shell -> ``(xmin, xmax)`` of its control-point hull, mm.
 
@@ -176,50 +206,70 @@ def _tiles_by_shell(
 
 
 def _check_alignment(
-    tiles_by_shell: dict[str, set[int]],
-    hulls: dict[str, tuple[float, ...]],
+    face_ids: list[int],
+    face_hulls: dict[int, tuple[float, ...]],
     tile_bbox: dict[int, tuple[float, ...]],
     labels: dict[int, str],
     face_order: list[str],
     surf_tags: list[int],
     out_map: list[list[tuple[int, int]]],
+    tiles_by_shell: dict[str, set[int]],
 ) -> None:
-    """Prove the STEP-order face->surface correspondence, or refuse.
+    """Prove the STEP-face -> OCC-surface correspondence, or refuse.
 
-    ``mesh_step`` assumes OCC imports faces in STEP declaration order. That is
-    deterministic and it is corroborated on ``test_fin_2.step``, but assuming it
-    silently is how this module got its zones wrong in the first place. Two
-    independent checks, and note what each is worth:
+    Exactly one thing here is a guess. The name of a shell and the faces it owns
+    are read straight out of ``SHELL_BASED_SURFACE_MODEL`` -> ``OPEN_SHELL``,
+    with nothing to get wrong. The guess is that **OCC imports surfaces in STEP
+    face order**, so that imported surface *i* is ``face_ids[i]``. That is
+    deterministic, but assuming it silently is how this module got its zones
+    wrong the first time.
 
-    - **Control-point hull containment.** A shell's tiles must lie inside its
-      own control-point box (superset property, so it cannot false-alarm).
-      Measured overhang on the correct assignment is exactly 0; a HEAL/TIP swap
-      overhangs by 1002 mm, a one-step rotation by 675 mm, a block swap by 275.
-    - **OCC label agreement**, where labels exist at all. ``OCCImportLabels``
-      carries only some names and attaches them to coincident faces from other
-      shells too, so it can only be read one way: a labelled tag's tiles must
-      sit *inside* the tiles of the shell it names.
+    The check is **per face**, not per shell. A shell's tiles must lie inside
+    that shell's own control-point box is far too weak: ``HALF`` and ``QUARTER``
+    in ``test_fin_2.step`` have byte-identical hulls, so a per-shell test has no
+    power between exactly the pair whose ELSETs the old x-range mask collapsed.
+    Per face it separates them by 122 mm. Measured on this STEP, per face:
 
-    Deliberately absent: area conservation across ``fragment``. It reads like
-    the natural invariant and it is a tautology -- ``fragment`` conserves area,
-    so every block partition passes it, including a HEAL/TIP swap, at
-    ``rel = 0.000e+00``. Do not re-add it believing it tests something.
+        correct order                 0.0000 mm overhang
+        HALF/QUARTER faces swapped  122.4899
+        rotated by one              674.9239
+        reversed                    997.4138
+        HEAL/TIP faces swapped     1002.2619
+        200 random permutations     200/200 caught
+
+    Containment is a superset property -- a B-spline face lies inside its
+    control points -- so it cannot false-alarm.
+
+    Second, weaker check: OCC labels, where they exist. ``OCCImportLabels``
+    carries only 2 of this file's 6 names and pins them to coincident faces from
+    other shells too, so it is read one way only -- a labelled tag's tiles must
+    sit inside the tiles of the shell it names.
+
+    Deliberately absent: **area conservation across ``fragment``**. It reads
+    like the natural invariant and it is a tautology -- ``fragment`` conserves
+    area, so every block partition passes it, including a HEAL/TIP swap, at
+    ``rel = 0.000e+00``. Do not add it back believing it tests something.
     """
-    for name, tiles in sorted(tiles_by_shell.items()):
-        hull = hulls[name]
-        span = max(hull[3] - hull[0], hull[4] - hull[1], hull[5] - hull[2], 1.0)
+    for index, fid in enumerate(face_ids):
+        hull = face_hulls[fid]
+        span = max(
+            hull[3] - hull[0], hull[4] - hull[1], hull[5] - hull[2], 1.0
+        )
         overhang = 0.0
-        for axis in (0, 1, 2):
-            lo = min(tile_bbox[t][axis] for t in tiles)
-            hi = max(tile_bbox[t][axis + 3] for t in tiles)
-            overhang = max(overhang, hull[axis] - lo, hi - hull[axis + 3])
+        for _dim, tag in out_map[index]:
+            box = tile_bbox[tag]
+            for axis in (0, 1, 2):
+                overhang = max(
+                    overhang, hull[axis] - box[axis], box[axis + 3] - hull[axis + 3]
+                )
         if overhang > _HULL_TOL_REL * span:
             raise GeometryError(
-                f"shell {name!r} was matched to tiles that stick "
-                f"{overhang:.4g} mm outside its own control-point hull. The "
-                "STEP face order and the OCC import order disagree, so every "
-                "zone in this mesh is suspect. Re-export the STEP, or map the "
-                "names by hand."
+                f"imported surface {surf_tags[index]} was matched to STEP face "
+                f"#{fid} (shell {face_order[index]!r}), but its tiles stick "
+                f"{overhang:.4g} mm outside that face's own control-point hull. "
+                "OCC did not import the faces in STEP order, so every zone in "
+                "this mesh is suspect. Re-export the STEP, or map the names by "
+                "hand."
             )
 
     for index, tag in enumerate(surf_tags):
@@ -237,9 +287,8 @@ def _check_alignment(
 
 
 #: A meshed zone under-measures a curved CAD face by chordal error -- on
-#: test_fin_2.step the worst is 0.007%, all of it in one 4.8 mm curved band.
-#: 1% leaves that alone while still catching a zone that got the wrong tiles
-#: (a HALF/TIP mix-up is 49% off).
+#: test_fin_2.step the worst is 0.007%, all of it in one 4.8 mm curved band. 1%
+#: leaves that alone while catching a tile the mesher failed to fill.
 _ZONE_AREA_TOL_REL = 0.01
 
 
@@ -248,13 +297,21 @@ def _check_zone_areas(
     cad_area: dict[str, float],
     element_area: dict[int, float],
 ) -> None:
-    """Meshed zone area must match the CAD face area the zone came from.
+    """Elements must cover the tiles their zone was built from.
 
-    Unlike area conservation across ``fragment`` -- which is a tautology, see
-    ``_check_alignment`` -- this compares two independently computed numbers:
-    the summed areas of the elements assigned to a zone, and the area OCC
-    reports for the tiles that zone's faces became. They agree only if the
-    assignment is right.
+    **This does not check the name-to-tile assignment**, and an earlier version
+    of this docstring claimed it did. Both sides are keyed off the same tile
+    set: ``cad_area[z]`` sums the tiles assigned to ``z`` and ``elsets[z]`` is
+    the elements meshed on those same tiles, so permuting the assignment moves
+    both together and the test passes. That is the same tautology as area
+    conservation across ``fragment``, reproduced one level up. Alignment is
+    checked per face in ``_check_alignment``; that is the only thing that
+    checks it.
+
+    What this does catch is a mesh that failed to fill its geometry -- a tile
+    that produced no elements, or far too few -- which is a real failure mode
+    here and one ccx would solve without complaint. Keep it for that, and do
+    not read it as a statement about zones.
     """
     for name, area in sorted(cad_area.items()):
         meshed = sum(element_area[e] for e in elsets.get(name, ()))
@@ -354,19 +411,19 @@ def mesh_step(
         )
 
     faces_by_shell = shell_faces(step_path)
-    hulls = shell_hulls_mm(step_path)
+    face_hulls = face_hulls_mm(step_path)
     coverages = {name: _sanitize_elset(name) for name in faces_by_shell}
     if len(set(coverages.values())) != len(coverages):
         raise GeometryError(
             f"shell names collide after sanitizing for ccx: {coverages}"
         )
-    # Faces in STEP declaration order; OCC imports surfaces in the same order.
-    face_order = [
-        name
-        for _fid, name in sorted(
-            (fid, name) for name, fids in faces_by_shell.items() for fid in fids
-        )
-    ]
+    # Faces in ascending STEP entity id, which is the order OCC imports them in
+    # -- the one assumption in this module, checked in _check_alignment.
+    _by_id = sorted(
+        (fid, name) for name, fids in faces_by_shell.items() for fid in fids
+    )
+    face_ids = [fid for fid, _name in _by_id]
+    face_order = [name for _fid, name in _by_id]
 
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -409,13 +466,14 @@ def mesh_step(
 
         tiles_by_shell = _tiles_by_shell(face_order, out_map)
         _check_alignment(
-            tiles_by_shell,
-            hulls,
+            face_ids,
+            face_hulls,
             {tag: gmsh.model.getBoundingBox(2, tag) for _dim, tag in tiles},
             labels,
             face_order,
             surf_tags,
             out_map,
+            tiles_by_shell,
         )
         shells_by_tile: dict[int, set[str]] = {}
         for name, tile_tags in tiles_by_shell.items():

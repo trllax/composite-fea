@@ -176,6 +176,56 @@ def test_the_fingerprint_tracks_the_resolved_stack_not_the_file(tmp_path):
     assert layup_fingerprint(reordered) != base, "ply order must change the key"
 
 
+def test_the_fingerprint_tracks_the_material_constants_not_just_the_name():
+    """Editing a modulus under a stable name once served stale rows in sweep.py.
+
+    The key carried only the material *name* while its docstring cited that
+    incident, so a doubled E1 produced an identical fingerprint over a deck
+    whose root D11 had gone from 81758 to 143276.
+    """
+    from dataclasses import replace
+
+    from compfea.materials import load_materials
+
+    library = load_materials(GENERIC)
+    rows = [{"zone": "cov_1", "ply": 1, "material": "cfrp",
+             "angle_deg": 0.0, "thickness_mm": 0.15}]
+    base = layup_fingerprint(rows, library, "x")
+
+    for field in ("e1", "e2", "nu12", "g12", "density"):
+        bumped = dict(library)
+        card = library["cfrp"].constants
+        bumped["cfrp"] = replace(
+            library["cfrp"],
+            constants=replace(card, **{field: getattr(card, field) * 1.01}),
+        )
+        assert layup_fingerprint(rows, bumped, "x") != base, field
+
+    # An unreferenced library row must NOT move the key.
+    trimmed = {"cfrp": library["cfrp"]}
+    assert layup_fingerprint(rows, trimmed, "x") == base
+
+
+def test_the_fingerprint_tracks_the_long_axis():
+    """The same ply book under x and under y are different laminates."""
+    from compfea.materials import load_materials
+
+    library = load_materials(GENERIC)
+    rows = [{"zone": "cov_1", "ply": 1, "material": "cfrp",
+             "angle_deg": 0.0, "thickness_mm": 0.15}]
+    assert layup_fingerprint(rows, library, "x") != layup_fingerprint(
+        rows, library, "y"
+    )
+
+
+def test_the_build_manifest_fingerprint_uses_both(tmp_path):
+    """Not just the helper -- what build() actually records."""
+    a = run(tmp_path)["layup_fingerprint"]
+    other = tmp_path / "y"
+    b = run(other, long_axis="y")["layup_fingerprint"]
+    assert a != b
+
+
 def test_long_axis_has_no_default(tmp_path):
     """layup.py refuses to guess; the CLI must not guess on its behalf."""
     parser = build_parser()

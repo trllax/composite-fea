@@ -200,9 +200,13 @@ def unused_zones(
     Legitimate for a nested region covered by outer plies. Worth printing,
     because it is also what a zone forgotten in the CSV looks like, and only
     the person who drew the CAD can tell the two apart.
+
+    A whole-part ply (``zone=ALL``) does **not** suppress this. An earlier
+    version returned early whenever one existed, on the reasoning that no zone
+    could then be bare -- true, and beside the point: a zone forgotten in the
+    ply book is still forgotten, it just is not empty. One ``ALL`` row silenced
+    the warning for every zone in the file.
     """
-    if any(r.zone is None for r in rows):
-        return []
     return sorted(
         {name for name in elsets if name != whole}
         - {r.zone for r in rows if r.zone is not None}

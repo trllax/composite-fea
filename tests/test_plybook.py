@@ -149,6 +149,18 @@ def test_a_whole_part_ply_covers_every_zone(tmp_path):
     check_against_mesh(rows, {"blade": (1, 2), "FULL": (1,), "TIP": (2,)})
 
 
+def test_a_whole_part_ply_does_not_silence_the_unused_zone_report(tmp_path):
+    """A forgotten zone is still forgotten; it just is not bare.
+
+    One ALL row used to return early and suppress the report for every zone.
+    """
+    rows = load_plybook(
+        write(tmp_path, HEADER, "1,ALL,cfrp,0,0.1,ud", "2,FULL,cfrp,90,0.1,ud")
+    )
+    elsets = {"blade": (1, 2), "FULL": (1,), "TIP": (2,), "SPAR": (1,)}
+    assert unused_zones(rows, elsets) == ["SPAR", "TIP"]
+
+
 # --------------------------------------------------------------------------
 # materials
 

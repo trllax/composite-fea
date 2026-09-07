@@ -46,7 +46,7 @@ mask did to this same geometry.
 ## The ply book
 
 14 plies. A ply covers its zone, so an inboard zone carries every ply naming it
-or any zone containing it: the root sees all 14, the outboard blade sees 4.
+or any zone containing it: the root sees 13 of the 14 (ply 12 is TIP-only), the outboard blade sees 4.
 
 **Ply 1 is the −z ply** — the first line of the `*SHELL SECTION, COMPOSITE`
 card. Reversing the file is not a no-op: it leaves `D` unchanged and flips `B`,
@@ -58,9 +58,11 @@ rather than trusting:
 
 - **Every zone symmetric about its own mid-plane**, so no zone warps flat.
 - **Every UD off-axis ply paired with its negation in the same zone.** The
-  woven skins need no partner: a woven ply at 45° carries tows at 45° and 135°
-  and is balanced alone. `abd.is_balanced` needs the material kinds to know
-  that; without them it reports a woven-skinned laminate as unbalanced.
+  woven skins need no partner *at 45°*: for a balanced weave `Q11 == Q22`, which
+  reduces `Qbar16` to `(Q11 - Q12 - 2 Q66)·cs(c² - s²)` — zero at 0°, 45° and
+  90° and nowhere else. A weave at 22.5° would genuinely be unbalanced, its tows
+  lying at 22.5° and 112.5°. `abd.is_balanced` reads this off `A16`/`A26`, which
+  is ACP's definition and needs no material metadata.
 - **Drops buried.** Plies 1, 2, 13, 14 run everywhere, so the outer surface is
   continuous and every drop sits under the skin.
 
@@ -71,6 +73,7 @@ rather than trusting:
 | `zone_report.csv` | elements, area, extent per zone — check against CAD |
 | `stack_table.csv` | resolved stack per zone, ply by ply, with z stations |
 | `laminate_abd.csv` | A, B, D, flexural moduli, symmetric/balanced/D16 flags |
+
 | `mesh.inp`, `layup.inp` | the deck pieces |
 | `build.json` | inputs, counts, layup fingerprint, warnings |
 
@@ -84,6 +87,21 @@ Resolved stacks at 16 mm, root to outboard:
 | `cov_2` (3_4ths) | 1.000 | 5193.6 | 0.0 | `[45/0/0/0/0/45]` |
 | `cov_1` (FULL) | 0.700 | 1413.6 | 0.0 | `[45/0/0/45]` |
 | `cov_6` (TIP) | 0.800 | 2295.2 | 0.0 | `[45/0/0/0/45]` |
+
+Flexural moduli come out as `ef_1_mpa` / `ef_2_mpa`, **not** `ef_x` / `ef_y`:
+direction 1 is the laminate's 0° direction, which is whichever global axis
+`long_axis` names. Here that is x, but for a `long_axis="y"` case — half this
+repo — direction 1 is global y, and a column called `ef_x` would be read as the
+wrong axis. Every row carries `long_axis` so the mapping travels with the CSV.
+
+| section | ef_1 (MPa) | ef_2 (MPa) |
+| --- | --- | --- |
+| `cov_5` (HEAL) | 65754 | 23187 |
+| `cov_4` (QUARTER) | 63784 | 23360 |
+| `cov_3` (HALF) | 60672 | 23615 |
+| `cov_2` (3_4ths) | 42199 | 23660 |
+| `cov_1` (FULL) | 25602 | 20436 |
+| `cov_6` (TIP) | 31200 | 22010 |
 
 `D16` is not zero on the zones carrying ±45 UD pairs, and that is correct. A
 balanced symmetric angle-ply laminate still has bend–twist coupling: the +45

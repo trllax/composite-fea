@@ -235,3 +235,95 @@ def test_mesh_step_imprints_and_tags_nested_coverage():
     assert "*ELEMENT, TYPE=S8R, ELSET=blade" in inp
     assert "*ELSET, ELSET=FULL" in inp
     assert "*NSET, NSET=far_face" in inp
+
+
+# --------------------------------------------------------------------------
+# the alignment guard itself
+#
+# Everything above pins the *outcome* on this STEP, which a hardcoded
+# CAD_AREA_MM2 would catch even with the guard removed. These exercise the
+# guard, i.e. the behaviour that protects a STEP nobody has tried yet, or this
+# one after a gmsh upgrade. Deleting _check_alignment used to leave the whole
+# suite green.
+
+
+def alignment_inputs():
+    """Everything _check_alignment needs, taken from the real STEP."""
+    import gmsh
+
+    from compfea.step_mesh import _sanitize_elset, _tiles_by_shell, face_hulls_mm
+
+    faces = shell_faces(FIN2)
+    by_id = sorted((f, n) for n, ids in faces.items() for f in ids)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    try:
+        gmsh.model.add("align")
+        gmsh.option.setNumber("Geometry.OCCImportLabels", 1)
+        gmsh.model.occ.importShapes(str(FIN2.resolve()))
+        gmsh.model.occ.synchronize()
+        surfs = gmsh.model.getEntities(2)
+        tags = [t for _d, t in surfs]
+        labels = {
+            t: gmsh.model.getEntityName(2, t).rsplit("/", 1)[-1] for t in tags
+        }
+        _out, out_map = gmsh.model.occ.fragment([surfs[0]], list(surfs[1:]))
+        gmsh.model.occ.synchronize()
+        boxes = {
+            t: gmsh.model.getBoundingBox(2, t) for _d, t in gmsh.model.getEntities(2)
+        }
+    finally:
+        gmsh.finalize()
+    names = [n for _f, n in by_id]
+    return {
+        "face_ids": [f for f, _n in by_id],
+        "face_hulls": face_hulls_mm(FIN2),
+        "tile_bbox": boxes,
+        "labels": labels,
+        "face_order": names,
+        "surf_tags": tags,
+        "out_map": out_map,
+        "tiles_by_shell": _tiles_by_shell(
+            [_sanitize_elset(n) for n in names], out_map
+        ),
+    }
+
+
+def test_check_alignment_accepts_the_step_face_order():
+    from compfea.step_mesh import _check_alignment
+
+    _check_alignment(**alignment_inputs())   # must not raise
+
+
+@pytest.mark.parametrize(
+    "mutate,label",
+    [
+        (lambda f: f[::-1], "reversed"),
+        (lambda f: f[1:] + f[:1], "rotated by one"),
+        # HEAL's only face against TIP's only face: equal face counts, so no
+        # count check could see it.
+        (lambda f: f[:12] + [f[20]] + f[13:20] + [f[12]], "HEAL/TIP faces"),
+        # A HALF face against a QUARTER face. Those two shells have
+        # byte-identical control-point hulls, so a per-shell test is blind
+        # here -- and this is the pair the old x-range mask collapsed.
+        (lambda f: f[:13] + [f[16]] + f[14:16] + [f[13]] + f[17:], "HALF/QUARTER"),
+    ],
+)
+def test_check_alignment_refuses_a_misordered_import(mutate, label):
+    from compfea.step_mesh import _check_alignment
+
+    inputs = alignment_inputs()
+    inputs["face_ids"] = mutate(inputs["face_ids"])
+    with pytest.raises(GeometryError, match="control-point hull|not within"):
+        _check_alignment(**inputs)
+
+
+def test_half_and_quarter_share_a_hull_so_per_shell_containment_is_blind():
+    """Why the guard is per face. If this ever stops being true, say so."""
+    hulls = shell_hulls_mm(FIN2)
+    assert hulls["HALF"] == hulls["QUARTER"]
+    faces = shell_faces(FIN2)
+    from compfea.step_mesh import face_hulls_mm
+
+    fh = face_hulls_mm(FIN2)
+    assert {fh[f] for f in faces["HALF"]} != {fh[f] for f in faces["QUARTER"]}

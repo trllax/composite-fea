@@ -7,7 +7,9 @@ The design front door. Three files you author, no flags describing the laminate:
                   --materials materials/generic.csv \\
                   --long-axis x --out results/fin_zoned
 
-Writes ``deck.inp`` plus four reports, and solves nothing unless asked:
+Writes the deck's two pieces -- ``mesh.inp`` and ``layup.inp`` -- plus four
+reports. It does not assemble a runnable deck and it never solves: boundary
+conditions and steps belong to a load case, not to a laminate.
 
 ``zone_report.csv``
     Element count, area and extent per mesh zone. Compare against the CAD
@@ -40,7 +42,7 @@ from pathlib import Path
 from compfea.abd import laminate_summary
 from compfea.geometry import Mesh
 from compfea.layup import LONG_AXES, coverages_from_mesh, mesh_elsets_for_stacks
-from compfea.materials import load_materials
+from compfea.materials import MaterialRecord, load_materials
 from compfea.plybook import (
     load_plybook,
     resolve,
@@ -61,20 +63,43 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def layup_fingerprint(rows: list[dict]) -> str:
+def layup_fingerprint(
+    rows: list[dict],
+    materials: dict[str, MaterialRecord] | None = None,
+    long_axis: str = "",
+) -> str:
     """Hash of the **resolved** stacks, for caching.
 
     Deliberately not the ply book's path or mtime: a moved file must still hit
-    cache, and an edited thickness must miss it. The material name alone is not
-    enough either -- editing a modulus under a stable name once served stale
-    rows, which is why sweep.py fingerprints all ten constants.
+    cache, and an edited thickness must miss it.
+
+    The material *name* is not enough, and this function shipped believing it
+    was while its own docstring said otherwise. Editing a modulus under a stable
+    name once served stale rows in ``sweep.py``, which is why
+    ``_material_fingerprint`` there interpolates all ten constants. Pass
+    ``materials`` and it does the same here. ``long_axis`` is in the key too:
+    it decides which global axis a 0-degree ply runs along, so the same ply book
+    under ``x`` and under ``y`` are different laminates that would otherwise
+    share a key.
+
+    Both are optional only so the stack-shape behaviour can be tested on its
+    own; ``build`` always passes them.
     """
-    payload = "|".join(
+    parts = [f"axis={long_axis}"]
+    parts += [
         f"{r['zone']}:{r['ply']}:{r['material']}:"
         f"{float(r['angle_deg']):.6f}:{float(r['thickness_mm']):.9f}"
         for r in rows
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+    ]
+    if materials is not None:
+        for name in sorted({str(r["material"]) for r in rows}):
+            ec = materials[name].constants
+            parts.append(
+                f"mat={name}:{ec.e1!r}:{ec.e2!r}:{ec.e3!r}:{ec.nu12!r}:"
+                f"{ec.nu13!r}:{ec.nu23!r}:{ec.g12!r}:{ec.g13!r}:{ec.g23!r}:"
+                f"{ec.density!r}"
+            )
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
 def build(
@@ -120,9 +145,7 @@ def build(
     )
 
     table = stack_table(layup)
-    abd_rows = laminate_summary(
-        layup, {name: rec.kind for name, rec in library.items()}
-    )
+    abd_rows = laminate_summary(layup)
     write_csv(out / "zone_report.csv", zones)
     write_csv(out / "stack_table.csv", table)
     write_csv(out / "laminate_abd.csv", abd_rows)
@@ -141,7 +164,7 @@ def build(
         "n_plies": len(rows),
         "n_stacks": len(layup.zones),
         "materials_used": [m.name for m in layup.materials],
-        "layup_fingerprint": layup_fingerprint(table),
+        "layup_fingerprint": layup_fingerprint(table, library, long_axis),
         "warnings": warnings,
     }
     (out / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")

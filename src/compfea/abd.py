@@ -114,7 +114,10 @@ def abd(
 def flexural_moduli(
     d: np.ndarray, thickness: float
 ) -> tuple[float, float]:
-    """``(Ef_x, Ef_y)`` in MPa from the bending stiffness of a laminate.
+    """``(Ef_1, Ef_2)`` in MPa from the bending stiffness of a laminate.
+
+    Directions 1 and 2 are the **laminate** axes -- 1 along the 0-degree ply --
+    not global x and y. See ``laminate_summary``.
 
     The standard reduction ``12 / (t^3 * d_inv[i, i])``, which is the modulus of
     an equivalent homogeneous plate in bending. Not the same as ``A``'s
@@ -151,62 +154,65 @@ def is_symmetric(b: np.ndarray, a: np.ndarray) -> bool:
     return bool(np.max(np.abs(b)) <= COUPLING_REL_TOL * max(np.max(np.abs(a)), 1e-300))
 
 
-def is_balanced(zone: ZoneLayup, kinds: dict[str, str] | None = None) -> bool:
-    """Every ``+theta`` has a matching ``-theta`` of equal thickness.
+def is_balanced(a: np.ndarray) -> bool:
+    """``A16 == A26 == 0`` to within float noise -- ACP's definition of balance.
 
-    Two kinds of ply never unbalance a stack:
+    Read off the membrane stiffness rather than by pairing plies, because
+    pairing gets it wrong in both directions and this report exists to be laid
+    beside ACP's:
 
-    - 0 and 90 degree plies, which are their own negation.
-    - **Any woven ply.** A woven lamina at ``theta`` carries warp tows at
-      ``theta`` and fill tows at ``theta + 90``, so a single woven +45 ply is
-      already balanced -- there is no such thing as a lone +45 weave needing a
-      -45 partner. Without ``kinds`` every ply is assumed UD, which reports a
-      perfectly good woven-skinned laminate as unbalanced.
+    - **False balanced.** Pairing on angle and thickness ignores *which
+      lamina*, so ``[+30 cfrp / -30 cfrp_woven]`` of equal thickness cancels in
+      the bookkeeping and not in ``A``: measured ``A16`` is 21% of ``A11``.
+    - **False unbalanced.** Fibre direction has period 180 degrees, so ``135``
+      and ``-45`` are the same ply. ``qbar`` knows that; a pairing rule that
+      compares raw angles does not, and calls ``[45/135]`` unbalanced when its
+      ``A16`` is exactly zero.
 
-    ``kinds`` maps material name -> ``"ud"`` or ``"woven"``; build it from a
-    ``materials`` library.
+    It also handles a weave for free, with no material metadata. ``Q11 == Q22``
+    reduces ``Qbar16`` to ``(Q11 - Q12 - 2 Q66) * cs (c^2 - s^2)``, which
+    vanishes at 0, 45 and 90 degrees -- so a woven ply laid at 45 needs no
+    partner, while one at 22.5 genuinely is unbalanced, its tows lying at 22.5
+    and 112.5. An earlier version took a ``kinds`` map and called *every* woven
+    ply self-balancing, which is right only at those three angles.
     """
-    kinds = kinds or {}
-    net: dict[float, float] = {}
-    for ply in zone.plies:
-        if kinds.get(ply.material, "ud") == "woven":
-            continue
-        angle = canonical_angle(ply.angle_deg)
-        if angle in (0.0, 90.0, -90.0):
-            continue
-        net[abs(angle)] = net.get(abs(angle), 0.0) + math.copysign(
-            ply.thickness, angle
-        )
-    return all(abs(v) <= 1e-12 for v in net.values())
+    scale = max(abs(a[0, 0]), abs(a[1, 1]), 1e-300)
+    return bool(
+        abs(a[0, 2]) <= COUPLING_REL_TOL * scale
+        and abs(a[1, 2]) <= COUPLING_REL_TOL * scale
+    )
 
 
-def laminate_summary(
-    layup: Layup, kinds: dict[str, str] | None = None
-) -> list[dict[str, object]]:
+def laminate_summary(layup: Layup) -> list[dict[str, object]]:
     """One row per zone: thickness, A/B/D terms, flags -- the ACP comparison.
 
     Flat keys rather than nested matrices so this drops straight into a CSV and
     a dataframe. ``a11`` .. ``d66`` are the six independent terms of each 3x3.
 
-    ``kinds`` maps material name -> ``"ud"``/``"woven"`` and only affects the
-    ``balanced`` flag; see ``is_balanced``. Omit it and every ply counts as UD.
+    Axis naming: ``1`` is the laminate's 0-degree direction, which is the
+    global axis ``layup.long_axis`` names. The columns are ``ef_1``/``ef_2``,
+    not ``ef_x``/``ef_y``, because for ``long_axis="y"`` -- half this repo's
+    cases -- direction 1 *is* global y, and a column called ``ef_x`` would be
+    read as the global-x modulus. ``long_axis`` rides along in every row so the
+    mapping travels with the CSV.
     """
     materials = {m.name: m for m in layup.materials}
     rows: list[dict[str, object]] = []
     for zone in layup.zones:
         a, b, d = abd(zone, materials)
         thickness = zone.thickness
-        ef_x, ef_y = flexural_moduli(d, thickness)
+        ef_1, ef_2 = flexural_moduli(d, thickness)
         row: dict[str, object] = {
             "zone": zone.elset,
             "n_plies": len(zone.plies),
             "thickness_mm": thickness,
             "stack": "[" + "/".join(f"{p.angle_deg:g}" for p in zone.plies) + "]",
             "symmetric": is_symmetric(b, a),
-            "balanced": is_balanced(zone, kinds),
+            "balanced": is_balanced(a),
             "bend_twist_sign": bend_twist_sign(d),
-            "ef_x_mpa": ef_x,
-            "ef_y_mpa": ef_y,
+            "long_axis": layup.long_axis,
+            "ef_1_mpa": ef_1,
+            "ef_2_mpa": ef_2,
         }
         for name, matrix in (("a", a), ("b", b), ("d", d)):
             for label, (i, j) in (
