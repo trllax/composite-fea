@@ -1,0 +1,19 @@
+# Demo fin from shop stock: Hexcel UNI 231 + 3K twill 198 only (no 379).
+# Thicknesses are inventory discrete values (gsm/1000), not free retunes.
+# Span +x; ply 1 = -z. Mid-plane symmetric; drops under continuous FULL skins.
+# Materials: materials/from_shop.csv (default lamina E when blank).
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,0,0.198,woven
+2,FULL,hexcel_uni_231,0,0.231,ud
+3,z_3_4ths,hexcel_uni_231,0,0.231,ud
+4,HALF,hexcel_uni_231,45,0.231,ud
+5,HALF,hexcel_uni_231,-45,0.231,ud
+6,QUARTER,hexcel_uni_231,0,0.231,ud
+7,HEAL,hexcel_uni_231,0,0.231,ud
+8,QUARTER,hexcel_uni_231,0,0.231,ud
+9,HALF,hexcel_uni_231,-45,0.231,ud
+10,HALF,hexcel_uni_231,45,0.231,ud
+11,z_3_4ths,hexcel_uni_231,0,0.231,ud
+12,TIP,hexcel_uni_231,0,0.231,ud
+13,FULL,hexcel_uni_231,0,0.231,ud
+14,FULL,twill_3k_198,0,0.198,woven

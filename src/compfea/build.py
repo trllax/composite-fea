@@ -126,7 +126,7 @@ def build(
     warnings = list(load_materials.warnings)
     rows = load_plybook(plybook)
 
-    raw = mesh_step(step, size_mm=size_mm, clamp_coverage=clamp_coverage)
+    raw = mesh_step(step, size_mm=size_mm, clamp_coverage=clamp_coverage, long_axis=long_axis)
     zones = zone_report(raw)
 
     coverages = coverages_from_mesh(raw.elsets)

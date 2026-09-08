@@ -1,0 +1,19 @@
+# Target: tip-normal F_90 ≈ 5 N on test_fin_2.
+# Stock fin_zoned plybook smoked to F≈0.22 N at 5° → ~4 N linear at 90°.
+# This book: 0/90 woven skins (angle 0) + UD drops, ~+8% thickness → ~+25% D.
+# Span +x; ply 1 = -z. Mid-plane symmetric; drops under continuous FULL skins.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,cfrp_woven,0,0.22,woven
+2,FULL,cfrp,0,0.16,ud
+3,z_3_4ths,cfrp,0,0.16,ud
+4,HALF,cfrp,45,0.16,ud
+5,HALF,cfrp,-45,0.16,ud
+6,QUARTER,cfrp,0,0.22,ud
+7,HEAL,cfrp,0,0.32,ud
+8,QUARTER,cfrp,0,0.22,ud
+9,HALF,cfrp,-45,0.16,ud
+10,HALF,cfrp,45,0.16,ud
+11,z_3_4ths,cfrp,0,0.16,ud
+12,TIP,cfrp,0,0.11,ud
+13,FULL,cfrp,0,0.16,ud
+14,FULL,cfrp_woven,0,0.22,woven

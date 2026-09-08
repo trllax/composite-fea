@@ -18,5 +18,8 @@
 # kind is 'ud' or 'woven'. It gates validation and is echoed in reports;
 # it does not change the deck.
 #
-# source is required. Record the ANSYS library name and version.
+# For the Engineering Data "Epoxy Carbon UD (230GPa) Prepreg" card used as
+# the shop blank-E default, see materials/ansys_ud_230_prepreg.csv (also
+# layup.ANSYS_EPOXY_CARBON_UD_230).
+#
 name,kind,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,xt,xc,yt,yc,s12,source

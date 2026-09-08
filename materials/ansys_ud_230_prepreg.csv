@@ -1,0 +1,7 @@
+# units: stress=MPa density=tonne/mm3
+# ANSYS Engineering Data cards used as shop blank-E defaults.
+# UD: Epoxy Carbon UD (230GPa) Prepreg (Table 4).
+# Woven: Epoxy Carbon Woven (230GPa) Wet (Engineering Data screenshot).
+name,kind,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,xt,xc,yt,yc,s12,source
+ansys_epoxy_carbon_ud_230,ud,121000.0,8600.0,8600.0,0.27,0.27,0.4,4700.0,4700.0,3100.0,1.49e-09,,,,,,ANSYS Engineering Data Epoxy Carbon UD (230GPa) Prepreg; Table 4
+ansys_epoxy_carbon_woven_230_wet,woven,59160.0,59160.0,7500.0,0.04,0.3,0.3,3300.0,2700.0,2700.0,1.451e-09,,,,,,ANSYS Engineering Data Epoxy Carbon Woven (230GPa) Wet; Engineering Data screenshot

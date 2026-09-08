@@ -323,3 +323,28 @@ def test_only_the_reported_angles_carry_a_stress_card():
     assert deck.count("GLOBAL=YES") == 2
     assert "FREQUENCY=" in deck  # end-of-step only, not every increment
     assert deck_for(Design())[0].count("GLOBAL=YES") == 0
+
+
+def test_tip_length_and_u_when_tip_is_at_low_end_of_span():
+    """FIN_TEST_3-style: heal at +y, tip at -y; CAD origin not at heal."""
+    from compfea.geometry import Mesh
+
+    mesh = Mesh(
+        nodes={
+            1: (0.0, 100.0, 0.0),
+            2: (20.0, 100.0, 0.0),
+            10: (0.0, 0.0, 0.0),
+            11: (20.0, 0.0, 0.0),
+        },
+        elements={1: (1, 2, 11, 10, 1, 2, 11, 10)},
+        nsets={"fixed_end": (1, 2), "far_face": (10, 11)},
+        elsets={"blade": (1,)},
+    )
+    assert tip_length_mm(mesh, long_axis="y") == pytest.approx(100.0)
+    u = tip_displacements(mesh, math.radians(90.0), long_axis="y")
+    # Arc from clamp y=100 toward tip: target_y = 100 - 2L/pi
+    y_t = 2.0 * 100.0 / math.pi
+    target = 100.0 - y_t
+    assert u[10][0] == pytest.approx(0.0)
+    assert u[10][1] == pytest.approx(target - 0.0)
+    assert u[10][2] == pytest.approx(y_t)

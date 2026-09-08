@@ -1,0 +1,20 @@
+# FIN_TEST_3 layup from last-three shop fabrics only:
+#   hexcel_im7_twill_205 (twill), hexcel_im2_uni_193 (UD), hexcel_himax_biax_100 (biax)
+# Sequence (ply 1 = -z showing face), as specified:
+#   twill-FULL, UD-FULL, UD-TIP, biax-FULL, UD-MID, twill-MID, biax-MID,
+#   twill-QUARTER, biax-QUARTER, twill-HEAL, biax-HEAL, twill-FULL
+# Span +y. Thicknesses = inventory discrete. Biax angle_deg=0 => fibres ±45 to span.
+# Note: this book is NOT mid-plane symmetric (B may be nonzero) — matches the listed order.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,hexcel_im7_twill_205,0,0.205,woven
+2,FULL,hexcel_im2_uni_193,0,0.193,ud
+3,TIP,hexcel_im2_uni_193,0,0.193,ud
+4,FULL,hexcel_himax_biax_100,0,0.100,woven
+5,MID,hexcel_im2_uni_193,0,0.193,ud
+6,MID,hexcel_im7_twill_205,0,0.205,woven
+7,MID,hexcel_himax_biax_100,0,0.100,woven
+8,QUARTER,hexcel_im7_twill_205,0,0.205,woven
+9,QUARTER,hexcel_himax_biax_100,0,0.100,woven
+10,HEAL,hexcel_im7_twill_205,0,0.205,woven
+11,HEAL,hexcel_himax_biax_100,0,0.100,woven
+12,FULL,hexcel_im7_twill_205,0,0.205,woven

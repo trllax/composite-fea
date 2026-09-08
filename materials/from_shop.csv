@@ -1,0 +1,9 @@
+# units: stress=MPa density=tonne/mm3
+# Generated from shop inventory. Rows that used_default_lamina say so in source.
+name,kind,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,xt,xc,yt,yc,s12,source
+hexcel_uni_379,ud,121000.0,8600.0,8600.0,0.27,0.27,0.4,4700.0,4700.0,3100.0,1.49e-09,,,,,,ansys_epoxy_carbon_ud_230 (SM library; roll fibre grade unspecified)
+hexcel_uni_231,ud,121000.0,8600.0,8600.0,0.27,0.27,0.4,4700.0,4700.0,3100.0,1.49e-09,,,,,,ansys_epoxy_carbon_ud_230 (SM library; roll fibre grade unspecified)
+twill_3k_198,woven,59160.0,59160.0,7500.0,0.04,0.3,0.3,3300.0,2700.0,2700.0,1.451e-09,,,,,,t700_woven_sm / ANSYS woven wet; fibre_* AS4C-class labels only
+hexcel_im2_uni_193,ud,153000.0,6813.0,6813.0,0.32,0.32,0.45,4086.9999999999995,4086.9999999999995,3000.0,1.5700000000000002e-09,,,,,,im2_ud from materials/im_lamina.csv (HexPly M47/IM2-C E1 + Epocast E2/G12)
+hexcel_himax_biax_100,woven,59160.0,59160.0,7500.0,0.04,0.3,0.3,3300.0,2700.0,2700.0,1.451e-09,,,,,,t700_woven_sm (T700 fibre → SM woven wet card; biax stand-in)
+hexcel_im7_twill_205,woven,86000.0,86000.0,7500.0,0.04,0.3,0.3,4000.0,3000.0,3000.0,1.5600000000000002e-09,,,,,,im7_woven from materials/im_lamina.csv (HexPly 8552 IM7 fabric ~85-86 GPa)
