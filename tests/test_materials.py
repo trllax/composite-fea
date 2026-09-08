@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from compfea.layup import UD_CFRP_GENERIC, EngineeringConstants, woven_from_ud
+from compfea.layup import (
+    ANSYS_EPOXY_CARBON_WOVEN_230_WET,
+    UD_CFRP_GENERIC,
+    EngineeringConstants,
+    woven_from_ud,
+)
 from compfea.materials import (
     DENSITY_TO_TONNE_PER_MM3,
     STRESS_TO_MPA,
@@ -260,11 +265,43 @@ def test_generic_csv_round_trips_the_module_constants():
         ), "textbook stiffnesses ship with no invented strengths"
 
 
-def test_the_ansys_template_is_loadable_but_empty():
-    """It ships with headers only, on purpose. Refusing is the correct answer."""
-    template = ROOT / "materials" / "ansys_composites.csv"
-    with pytest.raises(MaterialError, match="no material rows"):
-        load_materials(template)
+def test_the_ansys_library_loads_and_converts():
+    """ansys_composites.csv carries the ANSYS Epoxy Carbon library, in Pa.
+
+    The rows are pasted verbatim from ematerials_all.xml, so this exercises the
+    Pa -> MPa / kg-m^3 -> tonne-mm^3 conversion and check_admissible on real
+    ANSYS data. Any admissibility warning is an error here (on_warning="raise").
+    """
+    path = ROOT / "materials" / "ansys_composites.csv"
+    lib = load_materials(path, on_warning="raise")
+    assert set(lib) == {
+        "ansys_epoxy_carbon_ud_230_wet",
+        "ansys_epoxy_carbon_ud_395_prepreg",
+        "ansys_epoxy_carbon_woven_230_wet",
+        "ansys_epoxy_carbon_woven_395_prepreg",
+        "im7_ud_276",
+        "im7_woven_276",
+    }
+    for name, record in lib.items():
+        assert record.source, "every row needs provenance"
+        # allowables came across from the ANSYS Stress Limits, as positive MPa
+        assert all(v is not None and v > 0 for v in record.allowables().values())
+        is_ansys_stock = name.startswith("ansys_")
+        assert ("NOT an ANSYS stock card" in record.source) != is_ansys_stock
+
+    # Round trip against the hand-entered module constant. This is blind to a
+    # 13<->23 swap (that card has nu13 == nu23 and g13 == g23), so it does not
+    # pin the axis mapping on its own.
+    assert lib["ansys_epoxy_carbon_woven_230_wet"].constants == (
+        ANSYS_EPOXY_CARBON_WOVEN_230_WET
+    )
+
+    # The UD 230 Wet row is where the mapping is actually visible: nu_XZ != nu_YZ
+    # and G_XZ != G_YZ in the XML, so getting nu13/nu23 and g13/g23 right is a
+    # real constraint. XML: nu_XZ=0.27, nu_YZ=0.42; G_XZ=5.0e9, G_YZ=3.08e9.
+    ud = lib["ansys_epoxy_carbon_ud_230_wet"].constants
+    assert (ud.nu13, ud.nu23) == (0.27, 0.42)
+    assert (ud.g13, ud.g23) == (5000.0, 3080.0)
 
 
 def test_constants_for_is_deterministic_and_only_what_is_used():
