@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from compfea.layup import Layup
@@ -105,4 +106,84 @@ def tip_u_clamp_body(
         ]
     if node_file:
         lines += ["*NODE FILE", "U"]
+    return "\n".join(lines)
+
+
+def axial_drive_body(
+    driven_nset: str,
+    dof: int,
+    value: float,
+    *,
+    drive: bool = True,
+    gravity: tuple[float, Sequence[float]] | None = None,
+    read_nset: str = "fixed_end",
+    energy_elset: str = "blade",
+    tangent_nsets: Sequence[str] = (),
+    node_file: bool = False,
+    node_file_frequency: int = 0,
+) -> str:
+    """Step body: ramp one translation DOF on ``driven_nset`` along the blade axis.
+
+    Models a dead weight hung from a slender blade whose axis is held along the
+    weight's line of action: the weight compresses the blade past its buckling
+    load and it lies over. ``dof`` (1/2/3) is the axis of the *undeformed* blade
+    and ``value`` is the axial displacement it is ramped to -- toward the clamp,
+    so the caller signs it. Every other DOF on ``driven_nset`` is left free, so
+    the tip rotates and swings out as it buckles: the free transverse translation
+    is what keeps this a clamped-*free* column rather than a clamped-pinned one,
+    which would be several times stiffer.
+
+    Nothing here breaks the buckling symmetry -- that is the mesh's job. Give
+    ``mesh_outline`` a small ``camber`` (the gate uses ``CircularCamber``) or bow
+    the STEP mesh's nodes (the case runner's ``_bow``) so the column starts a
+    known amount off-axis and the response is a smooth imperfect-column path with
+    no bifurcation to diverge on.
+
+    ``read_nset`` is the fully clamped end; ``driven_nset`` RF along ``dof`` is
+    the equivalent hung weight (the fixture force, not counting body load), and
+    ``read_nset`` RF is the whole reaction. blade ``ELSE`` is for a Castigliano
+    check, and ``tangent_nsets`` get a per-node U print each so a tip tangent
+    angle can be built from two stations in the .dat -- deck nodes, not the
+    .frd's expanded solid mesh.
+
+    ``drive=False`` drops the ``*BOUNDARY`` line: a pre-step that applies only
+    ``gravity`` and lets the blade settle before the drive starts. ``gravity`` is
+    ``(g, (nx, ny, nz))`` -- ccx ``*DLOAD, GRAV`` on ``energy_elset``, ``g`` in
+    the deck's length units per s^2 (9810 for mm), direction a unit vector. It is
+    held while later steps ramp, so a self-weight run is two steps: settle under
+    gravity, then drive.
+    """
+    if dof not in (1, 2, 3):
+        raise ValueError(f"dof must be 1, 2 or 3, not {dof}")
+    if node_file_frequency < 0:
+        raise ValueError("node_file_frequency must be >= 0")
+    if not drive and gravity is None:
+        raise ValueError("drive=False needs a gravity load, else the step is empty")
+
+    lines: list[str] = []
+    if drive:
+        lines += ["*BOUNDARY", f"{driven_nset}, {dof}, {dof}, {value:.10f}"]
+    if gravity is not None:
+        g, (nx, ny, nz) = gravity
+        lines += [
+            "*DLOAD",
+            f"{energy_elset}, GRAV, {g:.6g}, {nx:.6g}, {ny:.6g}, {nz:.6g}",
+        ]
+    lines += [
+        f"*NODE PRINT, NSET={read_nset}, TOTALS=YES",
+        "RF",
+        f"*NODE PRINT, NSET={driven_nset}, TOTALS=YES",
+        "RF",
+    ]
+    for nset in (driven_nset, *tangent_nsets):
+        lines += [f"*NODE PRINT, NSET={nset}", "U"]
+    lines += [
+        f"*EL PRINT, ELSET={energy_elset}, TOTALS=ONLY",
+        "ELSE",
+    ]
+    if node_file:
+        if node_file_frequency:
+            lines += [f"*NODE FILE, FREQUENCY={node_file_frequency}", "U"]
+        else:
+            lines += ["*NODE FILE", "U"]
     return "\n".join(lines)
