@@ -58,6 +58,18 @@ def canonical_angle(angle_deg: float) -> float:
     return 0.0 if angle == 0.0 else angle  # collapse -0.0
 
 
+def _card_number(value: float) -> str:
+    """A float for a CalculiX data card: enough precision, bounded width.
+
+    ccx reads a data line in fixed 20-character fields, so a raw ``repr`` like
+    ``1.5700000000000002e-09`` (22 chars, straight out of a unit conversion)
+    overflows the field and ``*ERROR reading *DENSITY``. ``%.10g`` keeps ten
+    significant figures -- far past any material datasheet -- and never exceeds
+    ~16 characters, so ``1.57e-09`` and ``4087`` come out clean.
+    """
+    return f"{float(value):.10g}"
+
+
 @dataclass(frozen=True)
 class EngineeringConstants:
     """Orthotropic lamina card (*ELASTIC, TYPE=ENGINEERING CONSTANTS)."""
@@ -75,18 +87,19 @@ class EngineeringConstants:
     name: str = "cfrp"
 
     def to_inp(self) -> str:
+        c = _card_number
         return "\n".join(
             [
                 f"*MATERIAL, NAME={self.name}",
                 "*ELASTIC, TYPE=ENGINEERING CONSTANTS",
                 (
-                    f"{self.e1}, {self.e2}, {self.e3}, "
-                    f"{self.nu12}, {self.nu13}, {self.nu23}, "
-                    f"{self.g12}, {self.g13},"
+                    f"{c(self.e1)}, {c(self.e2)}, {c(self.e3)}, "
+                    f"{c(self.nu12)}, {c(self.nu13)}, {c(self.nu23)}, "
+                    f"{c(self.g12)}, {c(self.g13)},"
                 ),
-                f"{self.g23},",
+                f"{c(self.g23)},",
                 "*DENSITY",
-                f"{self.density}",
+                f"{c(self.density)}",
             ]
         )
 
@@ -395,7 +408,9 @@ class Layup:
             # Bottom (-z) ply first: ccx reads the first ply line as the -z ply.
             for ply in zone.plies:
                 ori = orientation_name(ply.angle_deg)
-                lines.append(f"{ply.thickness}, , {ply.material}, {ori}")
+                lines.append(
+                    f"{_card_number(ply.thickness)}, , {ply.material}, {ori}"
+                )
             blocks.append("\n".join(lines))
         return "\n".join(blocks)
 
