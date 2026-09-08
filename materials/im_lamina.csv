@@ -1,0 +1,8 @@
+# units: stress=MPa density=tonne/mm3
+# Intermediate-modulus and related lamina cards for shop matching.
+name,kind,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,xt,xc,yt,yc,s12,source
+im7_8552_ud,ud,164000,9000,9000,0.32,0.32,0.45,5200,5200,4000,1.57e-09,,,,,,"IM7/8552 UD: HexPly 8552 0° tensile E=164 GPa; E2/G/nu from typical IM7/8552 FEA tables (NASA CompDam / lit ~9 GPa, 5.2 GPa, 0.32)"
+im2_ud,ud,153000,6813,6813,0.32,0.32,0.45,4087,4087,3000,1.57e-09,,,,,,IM2 UD: HexPly M47/IM2-C 0° E=153 GPa; E2/G12 from IM2-12K/Epocast paper (Vf~53%); nu/G23 filled IM7-like
+im7_woven,woven,86000,86000,7500,0.04,0.3,0.3,4000,3000,3000,1.56e-09,,,,,,IM7 woven: HexPly 8552 IM7 fabric 0° tensile ~85-86 GPa; E3/nu/G patterned on ANSYS woven wet ratios with E1=86 GPa
+t700_woven_sm,woven,59160,59160,7500,0.04,0.3,0.3,3300,2700,2700,1.451e-09,,,,,,SM woven / T700 class: ANSYS Engineering Data Epoxy Carbon Woven (230GPa) Wet (screenshot)
+ansys_epoxy_carbon_ud_230,ud,121000,8600,8600,0.27,0.27,0.4,4700,4700,3100,1.49e-09,,,,,,ANSYS Engineering Data Epoxy Carbon UD (230GPa) Prepreg; Table 4

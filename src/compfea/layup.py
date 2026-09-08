@@ -113,6 +113,39 @@ UD_CFRP_GENERIC = EngineeringConstants(
 # Former name. Kept so existing callers keep resolving; prefer the explicit one.
 PLACEHOLDER_CFRP = UD_CFRP_GENERIC
 
+# ANSYS Workbench Engineering Data: "Epoxy Carbon UD (230GPa) Prepreg"
+# (ACP / Table 4 paste). Stiffnesses from that library card; density is the
+# Engineering Data default for the same named material (not in Table 4).
+ANSYS_EPOXY_CARBON_UD_230 = EngineeringConstants(
+    e1=121000.0,
+    e2=8600.0,
+    e3=8600.0,
+    nu12=0.27,
+    nu13=0.27,
+    nu23=0.40,
+    g12=4700.0,
+    g13=4700.0,
+    g23=3100.0,
+    density=1.49e-9,
+    name="ansys_epoxy_carbon_ud_230",
+)
+
+# ANSYS Workbench Engineering Data: "Epoxy Carbon Woven (230GPa) Wet"
+# (user screenshot / Engineering Data orthotropic card).
+ANSYS_EPOXY_CARBON_WOVEN_230_WET = EngineeringConstants(
+    e1=59160.0,
+    e2=59160.0,
+    e3=7500.0,
+    nu12=0.04,
+    nu13=0.30,
+    nu23=0.30,
+    g12=3300.0,
+    g13=2700.0,
+    g23=2700.0,
+    density=1.451e-9,
+    name="ansys_epoxy_carbon_woven_230_wet",
+)
+
 
 def _plane_stress_q(ec: EngineeringConstants) -> tuple[float, float, float, float]:
     """Reduced stiffnesses (Q11, Q12, Q22, Q66) of one lamina, MPa.

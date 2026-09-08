@@ -459,3 +459,33 @@ def test_check_zone_areas_catches_a_tile_the_mesher_failed_to_fill():
         _check_zone_areas({"z": (1,)}, {"z": 100.0}, {1: 50.0, 2: 50.0})
     with pytest.raises(GeometryError, match="non-positive"):
         _check_zone_areas({"z": (1,)}, {"z": 0.0}, {1: 50.0})
+
+
+FIN3 = ROOT / "FIN_TEST_3.step"
+
+
+@pytest.mark.skipif(not FIN3.is_file(), reason="FIN_TEST_3.step not in repo")
+def test_fin_test_3_tip_is_ymin_opposite_heal_not_xmax():
+    """Span is +y; tip drive must be the tip edge, not a chord at xmax."""
+    mesh = mesh_step(FIN3, size_mm=16.0, clamp_coverage="HEAL", long_axis="y")
+    tip = [mesh.nodes[n] for n in mesh.nsets["far_face"]]
+    root = [mesh.nodes[n] for n in mesh.nsets["fixed_end"]]
+    tip_y = [p[1] for p in tip]
+    tip_x = [p[0] for p in tip]
+    root_y = [p[1] for p in root]
+    assert max(tip_y) < min(root_y), "tip must sit entirely tipward of HEAL"
+    # Tip edge is a station at ymin, not a vertical chord at xmax.
+    assert max(tip_y) - min(tip_y) < 5.0
+    assert max(tip_x) - min(tip_x) > 50.0
+    from compfea.ubend import tip_length_mm
+    arm = tip_length_mm(mesh, long_axis="y")
+    assert arm == pytest.approx(min(root_y) - min(tip_y), rel=1e-6)
+    assert arm > 500.0
+
+
+def test_fin2_tip_remains_xmax_with_long_axis_x():
+    mesh = mesh_step(FIN2, size_mm=CLEAN_SIZE_MM, long_axis="x")
+    tip = [mesh.nodes[n] for n in mesh.nsets["far_face"]]
+    xs = [p[0] for p in tip]
+    assert max(xs) - min(xs) < 1.0
+    assert min(xs) == pytest.approx(max(p[0] for p in mesh.nodes.values()), abs=1e-6)

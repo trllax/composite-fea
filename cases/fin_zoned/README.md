@@ -11,6 +11,26 @@ compfea-build --step test_fin_2.step \
               --out results/fin_zoned
 ```
 
+
+## Shop-stock demo
+
+Scarce inventory only (`hexcel_uni_231` + `twill_3k_198`; no 379),
+blank-E filled from default lamina cards via `materials/from_shop.csv`:
+
+```sh
+python -c "from compfea.shop_inventory import load_shop_inventory, write_materials_csv as w; w(load_shop_inventory('materials/shop_inventory.csv'), 'materials/from_shop.csv')"
+
+compfea-build --step test_fin_2.step \
+              --plybook cases/fin_zoned/plybook_shop.csv \
+              --materials materials/from_shop.csv \
+              --long-axis x --size-mm 40 \
+              --out results/fin_shop_demo
+```
+
+Or `python cases/fin_zoned/run_ubend.py` (defaults to that plybook / materials;
+add `--end-deg 5` for a cheap tip-force smoke before a full 90° hunt).
+
+
 ## Long axis: +x
 
 A 0-degree ply runs along the span, root to tip, which on this STEP is **+x**.

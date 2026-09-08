@@ -440,6 +440,7 @@ def mesh_step(
     size_mm: float = 40.0,
     coverage_tol_mm: float | None = None,
     clamp_coverage: str | None = "HEAL",
+    long_axis: str = "x",
     quad_floor: float = 0.98,
     heading: str = "",
 ) -> Mesh:
@@ -462,16 +463,19 @@ def mesh_step(
     and made ``TIP`` 2.5x too large -- see ``cases/step_fin/README.md``.
     ``coverage_tol_mm`` is therefore dead and warns if passed.
 
-    Tip drive set (``far_face``) is the maximum-x boundary edge (fin span
-    along +x). Clamp set (``fixed_end``) defaults to every node under the
-    ``HEAL`` coverage mask; pass ``clamp_coverage=None`` to fall back to the
-    minimum-x edge only.
+    Tip drive set (``far_face``) is the free tip edge: the mesh end along
+    ``long_axis`` opposite the clamp. Clamp set (``fixed_end``) defaults to
+    every node under the ``HEAL`` coverage mask; pass ``clamp_coverage=None``
+    to fall back to the low end of ``long_axis`` only. ``long_axis`` must match
+    the ply book / build flag (``x`` for ``test_fin_2``, ``y`` for ``FIN_TEST_3``).
     """
     step_path = Path(step_path)
     if not step_path.is_file():
         raise FileNotFoundError(step_path)
     if not (math.isfinite(size_mm) and size_mm > 0):
         raise GeometryError(f"size_mm must be positive, got {size_mm}")
+    if long_axis not in ("x", "y"):
+        raise GeometryError(f"long_axis must be 'x' or 'y', got {long_axis!r}")
 
     if coverage_tol_mm is not None:
         warnings.warn(
@@ -662,22 +666,15 @@ def mesh_step(
                 "element must be inside at least the outermost shell"
             )
 
-        # Tip = free tip edge at xmax. Clamp = all nodes under clamp_coverage
-        # (default HEAL), else the xmin edge.
-        xs = [p[0] for p in nodes.values()]
-        xmin, xmax = min(xs), max(xs)
-        tip_tol = max(1e-6, 1e-4 * (xmax - xmin))
+        # Clamp = HEAL mask (default) or low end of long_axis.
+        # Tip = mesh end along long_axis opposite the clamp (not always xmax).
+        axis = 0 if long_axis == "x" else 1
+        span = [p[axis] for p in nodes.values()]
+        smin, smax = min(span), max(span)
+        tip_tol = max(1e-6, 1e-4 * (smax - smin))
 
-        def on_plane(x: float, target: float) -> bool:
-            return abs(x - target) <= tip_tol
-
-        tip_nodes = tuple(
-            sorted(nid for nid, (x, _, _) in nodes.items() if on_plane(x, xmax))
-        )
-        if not tip_nodes:
-            raise GeometryError(
-                f"no tip-edge nodes at xmax={xmax:g}"
-            )
+        def on_station(nid: int, target: float) -> bool:
+            return abs(nodes[nid][axis] - target) <= tip_tol
 
         clamp_name = None
         if clamp_coverage is not None:
@@ -693,16 +690,46 @@ def mesh_step(
             root_nodes = tuple(sorted(clamp_nodes))
         else:
             root_nodes = tuple(
-                sorted(nid for nid, (x, _, _) in nodes.items() if on_plane(x, xmin))
+                sorted(nid for nid in nodes if on_station(nid, smin))
             )
         if not root_nodes:
             raise GeometryError("clamp NSET (fixed_end) is empty")
 
+        clamp_span = [nodes[nid][axis] for nid in root_nodes]
+        clamp_mid = 0.5 * (min(clamp_span) + max(clamp_span))
+        # Tip station = global end farther from the clamp patch.
+        if abs(smax - clamp_mid) >= abs(smin - clamp_mid):
+            tip_station = smax
+            tip_side = f"{long_axis}max"
+        else:
+            tip_station = smin
+            tip_side = f"{long_axis}min"
+        tip_nodes = tuple(
+            sorted(nid for nid in nodes if on_station(nid, tip_station))
+        )
+        if not tip_nodes:
+            raise GeometryError(
+                f"no tip-edge nodes at {long_axis}={tip_station:g} "
+                f"(long_axis={long_axis!r})"
+            )
+        # Tip must sit outside the clamp along the span -- origin anywhere is fine.
+        tip_span = [nodes[nid][axis] for nid in tip_nodes]
+        if max(tip_span) < min(clamp_span) - tip_tol:
+            pass  # tip entirely below clamp
+        elif min(tip_span) > max(clamp_span) + tip_tol:
+            pass  # tip entirely above clamp
+        else:
+            raise GeometryError(
+                f"tip edge at {long_axis}={tip_station:g} overlaps clamp "
+                f"[{min(clamp_span):g}, {max(clamp_span):g}]; check long_axis "
+                f"({long_axis!r}) and clamp_coverage"
+            )
+
         default_heading = (
             f"STEP import {step_path.name}: {len(elements)} S8R, "
             f"coverages {sorted(coverages.values())}; "
-            f"clamp={'mask '+clamp_name if clamp_name else 'xmin edge'}, "
-            "tip=xmax edge; zones from the OCC fragment map (exact)"
+            f"clamp={'mask '+clamp_name if clamp_name else long_axis + 'min edge'}, "
+            f"tip={tip_side} edge; zones from the OCC fragment map (exact)"
         )
         mesh = Mesh(
             nodes=nodes,

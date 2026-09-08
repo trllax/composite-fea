@@ -51,17 +51,29 @@ def tip_length_mm(
     root_nset: str = "fixed_end",
     long_axis: str = "y",
 ) -> float:
-    """Free length: tip station minus outboard clamp station along ``long_axis``.
+    """Free length along ``long_axis`` from outboard clamp face to tip edge.
 
-    For a bonded clamp patch (e.g. HEAL mask), the arm is tip minus *max*
-    root-set coordinate along the span, not the inboard edge.
+    Tip may sit at the high *or* low end of the span (CAD origin need not be
+    at the heal). For a bonded clamp patch the arm uses the clamp station
+    nearest the tip, not the far heal edge.
     """
     if long_axis not in ("x", "y"):
         raise ValueError(f"long_axis must be 'x' or 'y', not {long_axis!r}")
     axis = 0 if long_axis == "x" else 1
     tip = [mesh.nodes[n][axis] for n in mesh.nsets[tip_nset]]
     root = [mesh.nodes[n][axis] for n in mesh.nsets[root_nset]]
-    return max(tip) - max(root)
+    tip_hi, tip_lo = max(tip), min(tip)
+    root_hi, root_lo = max(root), min(root)
+    # Tip entirely on the high side of the clamp.
+    if tip_lo >= root_hi - 1e-9:
+        return tip_hi - root_hi
+    # Tip entirely on the low side of the clamp.
+    if tip_hi <= root_lo + 1e-9:
+        return root_lo - tip_lo
+    raise ValueError(
+        f"tip nset overlaps clamp along {long_axis}: "
+        f"tip [{tip_lo:g}, {tip_hi:g}] vs root [{root_lo:g}, {root_hi:g}]"
+    )
 
 
 def tip_displacements(
@@ -89,22 +101,35 @@ def tip_displacements(
     if length <= 0:
         raise ValueError(f"length must be > 0, got {length}")
     r = length / theta_rad
-    s_t = r * math.sin(theta_rad)  # along undeformed long axis from clamp edge
+    s_t = r * math.sin(theta_rad)  # arc length projected along undeformed span
     z_lift = r * (1.0 - math.cos(theta_rad))
     axis = 0 if long_axis == "x" else 1
-    # Clamp outboard station; tip target along axis = clamp + s_t
     root_axis = [mesh.nodes[n][axis] for n in mesh.nsets["fixed_end"]]
-    s0 = max(root_axis)
-    target_s = s0 + s_t
+    tip_axis = [mesh.nodes[n][axis] for n in mesh.nsets[tip_nset]]
+    tip_mid = 0.5 * (min(tip_axis) + max(tip_axis))
+    root_hi, root_lo = max(root_axis), min(root_axis)
+    # Outboard clamp face nearest the tip; +sign points clamp -> tip.
+    if tip_mid >= root_hi - 1e-9:
+        s0 = root_hi
+        sign = 1.0
+    elif tip_mid <= root_lo + 1e-9:
+        s0 = root_lo
+        sign = -1.0
+    else:
+        raise ValueError(
+            f"tip nset overlaps clamp along {long_axis}: "
+            f"tip~{tip_mid:g} vs root [{root_lo:g}, {root_hi:g}]"
+        )
+    target_s = s0 + sign * s_t
     out: dict[int, tuple[float, float, float]] = {}
     for nid in mesh.nsets[tip_nset]:
         x0, y0, z0 = mesh.nodes[nid]
         if long_axis == "y":
-            # keep x; drive y,z (strip convention)
-            out[nid] = (0.0, target_s - y0, z0 + z_lift - z0)
+            # keep x; drive y,z (strip convention / FIN_TEST_3)
+            out[nid] = (0.0, target_s - y0, z_lift)
         else:
-            # keep y; drive x,z (fin span along +x)
-            out[nid] = (target_s - x0, 0.0, z0 + z_lift - z0)
+            # keep y; drive x,z (fin span along +x / test_fin_2)
+            out[nid] = (target_s - x0, 0.0, z_lift)
     return out
 
 

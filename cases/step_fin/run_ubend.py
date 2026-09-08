@@ -59,7 +59,7 @@ def default_plies():
 
 
 def build_mesh_and_layup(size_mm: float):
-    raw = mesh_step(STEP, size_mm=size_mm)
+    raw = mesh_step(STEP, size_mm=size_mm, long_axis=LONG_AXIS)
     cov = coverages_from_mesh(raw.elsets)
     layup, stacks = layup_from_coverage(default_plies(), cov, long_axis=LONG_AXIS)
     mesh = Mesh(
