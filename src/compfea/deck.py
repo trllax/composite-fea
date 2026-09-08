@@ -114,6 +114,8 @@ def axial_drive_body(
     dof: int,
     value: float,
     *,
+    drive: bool = True,
+    gravity: tuple[float, Sequence[float]] | None = None,
     read_nset: str = "fixed_end",
     energy_elset: str = "blade",
     tangent_nsets: Sequence[str] = (),
@@ -137,21 +139,37 @@ def axial_drive_body(
     known amount off-axis and the response is a smooth imperfect-column path with
     no bifurcation to diverge on.
 
-    ``read_nset`` is the fully clamped end; its RF component along ``dof`` is the
-    equivalent hung weight. ``driven_nset`` RF and per-node U are printed too as
-    cross-checks, blade ``ELSE`` for a Castigliano check of the reaction, and
-    ``tangent_nsets`` get a per-node U print each so a tip tangent angle can be
-    built from two stations in the .dat -- deck nodes, not the .frd's expanded
-    solid mesh.
+    ``read_nset`` is the fully clamped end; ``driven_nset`` RF along ``dof`` is
+    the equivalent hung weight (the fixture force, not counting body load), and
+    ``read_nset`` RF is the whole reaction. blade ``ELSE`` is for a Castigliano
+    check, and ``tangent_nsets`` get a per-node U print each so a tip tangent
+    angle can be built from two stations in the .dat -- deck nodes, not the
+    .frd's expanded solid mesh.
+
+    ``drive=False`` drops the ``*BOUNDARY`` line: a pre-step that applies only
+    ``gravity`` and lets the blade settle before the drive starts. ``gravity`` is
+    ``(g, (nx, ny, nz))`` -- ccx ``*DLOAD, GRAV`` on ``energy_elset``, ``g`` in
+    the deck's length units per s^2 (9810 for mm), direction a unit vector. It is
+    held while later steps ramp, so a self-weight run is two steps: settle under
+    gravity, then drive.
     """
     if dof not in (1, 2, 3):
         raise ValueError(f"dof must be 1, 2 or 3, not {dof}")
     if node_file_frequency < 0:
         raise ValueError("node_file_frequency must be >= 0")
+    if not drive and gravity is None:
+        raise ValueError("drive=False needs a gravity load, else the step is empty")
 
-    lines = [
-        "*BOUNDARY",
-        f"{driven_nset}, {dof}, {dof}, {value:.10f}",
+    lines: list[str] = []
+    if drive:
+        lines += ["*BOUNDARY", f"{driven_nset}, {dof}, {dof}, {value:.10f}"]
+    if gravity is not None:
+        g, (nx, ny, nz) = gravity
+        lines += [
+            "*DLOAD",
+            f"{energy_elset}, GRAV, {g:.6g}, {nx:.6g}, {ny:.6g}, {nz:.6g}",
+        ]
+    lines += [
         f"*NODE PRINT, NSET={read_nset}, TOTALS=YES",
         "RF",
         f"*NODE PRINT, NSET={driven_nset}, TOTALS=YES",

@@ -245,20 +245,26 @@ def _centroid(mesh: Mesh, nset: str) -> np.ndarray:
     return np.mean([mesh.nodes[n] for n in ids], axis=0)
 
 
-def collect(run_dir: Path, mesh: Mesh, *, long_axis: str) -> pd.DataFrame:
+def collect(
+    run_dir: Path, mesh: Mesh, *, long_axis: str, time_min: float = 0.0
+) -> pd.DataFrame:
     """Per-increment W, axial shortening, energy and tip angle, from the .dat only.
+
+    ``W`` is the **clip** RF along the drive axis -- the tip-fixture force, i.e.
+    the equivalent hung weight, which does not include the blade's own body load
+    (that goes to the heel). Without gravity the two are equal and opposite.
 
     Tip angle comes from two *NODE PRINT / U stations (deck nodes), not the .frd:
     ccx's expanded solid mesh fans one planform station into many wherever the
     shell normal is tilted, so a midsurface fit there is unreliable on a
-    non-flat blade.
+    non-flat blade. ``time_min`` skips a gravity-settle pre-step.
     """
     axis = _axis_index(long_axis)
     comp = ("fx", "fy", "fz")[axis]
     dat = run_dir / "job.dat"
 
     totals = parse_dat_totals(dat)
-    heal = totals[totals["nset"] == "fixed_end"].set_index("time")
+    clip_rf = totals[totals["nset"] == "clip"].set_index("time")
     energy = parse_dat_energy(dat)
     blade = energy[energy["elset"] == "blade"].set_index("time")
     clip_u = read_set_disp(dat, "clip")
@@ -267,12 +273,14 @@ def collect(run_dir: Path, mesh: Mesh, *, long_axis: str) -> pd.DataFrame:
     clip0 = _centroid(mesh, "clip")
     band0 = _centroid(mesh, "tip_band")
 
-    # All four are *NODE PRINT / *EL PRINT at the default (every-increment)
-    # frequency, so their times line up exactly; require that rather than
-    # nearest-match so a shape is never paired with another increment's reaction.
+    # All four print at the default (every-increment) frequency, so their times
+    # line up exactly; require that rather than nearest-match so a reading is
+    # never paired with another increment's.
     rows = []
     for t, cu in sorted(clip_u.items()):
-        if t not in band_u or t not in heal.index or t not in blade.index:
+        if t <= time_min + 1e-9:
+            continue
+        if t not in band_u or t not in clip_rf.index or t not in blade.index:
             continue
         theta, ratio = station_tangent_deg(
             tuple(clip0),
@@ -286,30 +294,47 @@ def collect(run_dir: Path, mesh: Mesh, *, long_axis: str) -> pd.DataFrame:
                 "u_axial_mm": abs(cu[axis]),
                 "theta_deg": theta,
                 "tangent_ratio": ratio,
-                "W_N": abs(float(heal.loc[t, comp])),
+                "W_N": abs(float(clip_rf.loc[t, comp])),
                 "energy_Nmm": float(blade.loc[t, "energy"]),
             }
         )
     if not rows:
-        raise SystemExit("no increments with clip, band, RF and energy all printed")
+        raise RuntimeError("no increments with clip, band, RF and energy all printed")
     return pd.DataFrame(rows).sort_values("theta_deg").reset_index(drop=True)
 
 
-def report(df: pd.DataFrame, run_dir: Path, *, bench_n: float | None) -> None:
+def report(
+    df: pd.DataFrame,
+    run_dir: Path,
+    *,
+    bench_n: float | None,
+    bench_deg: float | None = None,
+) -> None:
     df.to_csv(run_dir / "W_vs_theta.csv", index=False)
 
     fig, ax = plt.subplots(figsize=(5.5, 4.0))
-    ax.plot(df["theta_deg"], df["W_N"], "o-", lw=1.4, ms=4)
+    ax.plot(df["theta_deg"], df["W_N"], "o-", lw=1.4, ms=4, label="model")
     ax.axvline(90.0, color="0.6", lw=1.0, ls="--")
-    if bench_n is not None:
+    if bench_n is not None and bench_deg is not None:
+        ax.plot([bench_deg], [bench_n], "D", color="C3", ms=8, label="bench")
+    elif bench_n is not None:
         ax.axhline(bench_n, color="C3", lw=1.0, ls=":", label=f"bench ~{bench_n:g} N")
-        ax.legend()
+    ax.legend()
     ax.set_xlabel("tip tangent theta (deg)")
-    ax.set_ylabel("equivalent hung weight W (N)")
+    ax.set_ylabel("clip fixture force W (N)")
     ax.set_title("FIN_TEST_3 tip-weight: W(theta)")
     fig.tight_layout()
     fig.savefig(run_dir / "W_vs_theta.svg", format="svg")
     plt.close(fig)
+
+    if bench_n is not None and bench_deg is not None:
+        lo, hi = df["theta_deg"].min(), df["theta_deg"].max()
+        if lo < bench_deg < hi:
+            w_at = float(np.interp(bench_deg, df["theta_deg"], df["W_N"]))
+            print(
+                f"W(theta={bench_deg:g} deg) = {w_at:.3f} N   "
+                f"bench {bench_n:g} N   ratio {w_at / bench_n:.2f}"
+            )
 
     worst_ratio = float((df["tangent_ratio"] - 1.0).abs().max())
     if worst_ratio > 0.03:
@@ -329,7 +354,7 @@ def report(df: pd.DataFrame, run_dir: Path, *, bench_n: float | None) -> None:
     if (df["theta_deg"] < 90.0).any() and (df["theta_deg"] > 90.0).any():
         w90 = float(np.interp(90.0, df["theta_deg"], df["W_N"]))
         line = f"W(theta=90 deg) = {w90:.3f} N"
-        if bench_n:
+        if bench_n and bench_deg is None:
             line += f"   bench ~{bench_n:g} N   ratio {w90 / bench_n:.2f}"
         print(line)
     else:
@@ -374,10 +399,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--static-line", default=FIN_STATIC_LINE)
     p.add_argument(
+        "--gravity",
+        type=float,
+        default=0.0,
+        help="blade self-weight: g in m/s^2 (e.g. 9.81). Adds a settle step "
+        "before the drive; W is still the clip fixture force only",
+    )
+    p.add_argument(
         "--bench-n",
         type=float,
         default=None,
         help="measured bench weight, N, for the plot/ratio only",
+    )
+    p.add_argument(
+        "--bench-deg",
+        type=float,
+        default=None,
+        help="tip angle the bench weight was recorded at; plots it as a point "
+        "and prints the ratio there",
     )
     p.add_argument("--threads", type=int, default=5)
     p.add_argument("--timeout-s", type=float, default=36000.0)
@@ -409,25 +448,55 @@ def main(argv: list[str] | None = None) -> int:
 
     axis = _axis_index(LONG_AXIS)
     _, tipward = _clamp_face(mesh, axis)
-    # Compression drives the clip toward the clamp face -- against tip-ward.
+    # Compression drives the clip toward the clamp face -- against tip-ward. The
+    # hung weight and gravity pull the same way, so gravity points there too.
     value = -tipward * args.uy_frac * length
+    grav_dir = [0.0, 0.0, 0.0]
+    grav_dir[axis] = -tipward
 
-    body = axial_drive_body(
-        "clip",
-        axis + 1,
-        value,
-        read_nset="fixed_end",
-        tangent_nsets=("tip_band",),
+    steps: list[StaticStep] = []
+    if args.gravity > 0.0:
+        g_mm = args.gravity * 1000.0
+        steps.append(
+            StaticStep(
+                axial_drive_body(
+                    "clip",
+                    axis + 1,
+                    0.0,
+                    drive=False,
+                    gravity=(g_mm, grav_dir),
+                    read_nset="fixed_end",
+                    tangent_nsets=("tip_band",),
+                ),
+                inc=40000,
+                static_line=args.static_line,
+            )
+        )
+    steps.append(
+        StaticStep(
+            # A gravity settle step, if any, already ramped GRAV to full; ccx
+            # carries it forward held, so the drive step does not restate it.
+            axial_drive_body(
+                "clip",
+                axis + 1,
+                value,
+                read_nset="fixed_end",
+                tangent_nsets=("tip_band",),
+            ),
+            inc=40000,
+            static_line=args.static_line,
+        )
     )
+    final_time = float(len(steps))
     deck = assemble(
         mesh_inp=mesh.to_inp(),
         layup=layup,
         initial_bc="*BOUNDARY\nfixed_end, 1, 6",
-        steps=[StaticStep(body, inc=40000, static_line=args.static_line)],
+        steps=steps,
         heading=(
             f"FIN_TEST_3 tip-weight plybook={args.plybook.name} "
-            f"L={length:.3f} mm axial drive {value:.2f} mm "
-            f"({args.uy_frac:g} L), bow {args.bow_tip_mm:g} mm"
+            f"L={length:.3f} mm axial drive {value:.2f} mm ({args.uy_frac:g} L), "
+            f"bow {args.bow_tip_mm:g} mm, gravity {args.gravity:g} m/s^2"
         ),
     )
     deck_path = args.run_dir / "deck.inp"
@@ -435,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"deck {deck_path} elems={len(mesh.elements)} L={length:.2f} mm "
         f"clip={clip} drive_dof={axis + 1} value={value:.2f} mm "
+        f"steps={len(steps)} gravity={args.gravity:g} "
         f"mats={[m.name for m in layup.materials]}"
     )
 
@@ -443,13 +513,29 @@ def main(argv: list[str] | None = None) -> int:
         args.run_dir / "ccx",
         job_name="job",
         timeout_s=args.timeout_s,
-        final_time=1.0,
+        final_time=final_time,
         threads=args.threads,
     )
     print(f"OK wall={result.wall_time_s:.1f}s increments={result.increments}")
 
-    df = collect(args.run_dir / "ccx", mesh, long_axis=LONG_AXIS)
-    report(df, args.run_dir, bench_n=args.bench_n)
+    if args.gravity > 0.0:
+        settle = parse_dat_totals(args.run_dir / "ccx" / "job.dat")
+        settle = settle[
+            (settle["nset"] == "fixed_end")
+            & ((settle["time"] - 1.0).abs() <= 1e-6)
+        ]
+        if not settle.empty:
+            comp = ("fx", "fy", "fz")[axis]
+            print(f"blade self-weight (heel RF at settle) = "
+                  f"{abs(float(settle[comp].iloc[0])):.3f} N")
+
+    df = collect(
+        args.run_dir / "ccx",
+        mesh,
+        long_axis=LONG_AXIS,
+        time_min=1.0 if args.gravity > 0.0 else 0.0,
+    )
+    report(df, args.run_dir, bench_n=args.bench_n, bench_deg=args.bench_deg)
     print(f"wrote {args.run_dir / 'W_vs_theta.csv'} and .svg  ({len(df)} points)")
     return 0
 

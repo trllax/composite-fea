@@ -245,6 +245,22 @@ def test_tip_angle_from_two_stations_matches_the_closed_form(tmp_path):
     assert theta == pytest.approx(phi_deg, rel=0.05)
 
 
+def test_axial_drive_body_gravity_and_drive_flags():
+    """The self-weight plumbing: *DLOAD GRAV, and drive=False drops *BOUNDARY."""
+    settle = axial_drive_body(
+        "clip", 2, 0.0, drive=False, gravity=(9810.0, (0.0, 1.0, 0.0))
+    )
+    assert "*BOUNDARY" not in settle
+    assert "*DLOAD\nblade, GRAV, 9810, 0, 1, 0" in settle
+
+    driven = axial_drive_body("clip", 2, -5.0, gravity=(9810.0, (0.0, 1.0, 0.0)))
+    assert "clip, 2, 2, -5.0000000000" in driven
+    assert "GRAV" in driven
+
+    with pytest.raises(ValueError):
+        axial_drive_body("clip", 2, 0.0, drive=False)
+
+
 def test_the_gate_is_fast(solved):
     total = sum(r.wall_time_s for r in solved.values())
     assert total < 30.0, f"compressed_elastica gate took {total:.1f} s of solver"
