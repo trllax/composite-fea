@@ -58,6 +58,56 @@ tail -f results/<name>.log
 # 5. adjust the layup, go to 1
 ```
 
+## Sweeping many layups at once
+
+Instead of hand-editing one ply book, describe a family of them as a
+**`TaperDesign`** and let `sweep_layups.py` solve the grid. A `TaperDesign` is
+the same knobs as below, made explicit:
+
+- **`skins`** -- plies per face on the through-going zone (`FULL`), the
+  continuous outer surface;
+- **`core`** -- a half-stack on `FULL`, mirrored about the mid-plane (the flex
+  knob);
+- **`pads`** -- a half-stack per inboard/tip zone, mirrored (the kick knob).
+  `pad_order` is `-z` → mid-plane order, i.e. through-thickness position.
+
+Everything is **symmetric by construction** (`B ≈ 0`, no warp off the mould) and
+every ply thickness is the stocked value -- you pick material and angle, not
+thickness. What this cannot express is an odd ply count in a pad zone or an
+arbitrary unsymmetric order; hand-write a ply book for those.
+
+```sh
+# designs_example.json: a "base" design + "axes" whose Cartesian product is the
+# grid. Axis keys are top-level fields (core, skins, ...) or "pads.<ZONE>".
+python cases/fin_test_3/sweep_layups.py cases/fin_test_3/designs_example.json \
+       --uy-frac 0.60 --bow-tip-mm 0.5 --kick-bands 41 --jobs 6
+# prints a run id and detaches (like compfea.sweep). Poll:
+tail -f results/<run-id>/sweep.log
+jq . results/<run-id>/status.json          # state: running -> done (or error)
+```
+
+Each design is one `run_tipweight.py` solve (single core; `--jobs` at once).
+Results land in `results/<run-id>/results.parquet` -- one row per **distinct
+laminate** (designs that resolve identically are collapsed), with the flex/kick
+numbers and the design parameters flattened. The cache dir is keyed on the
+resolved laminate **and** the solve settings (`--uy-frac`, `--bow-tip-mm`,
+`--kick-bands`, `--size-mm`, the materials file, the STEP), so re-running with an
+added grid point is cheap and changing a solve setting correctly re-solves.
+
+Then rank against a target:
+
+```sh
+python cases/fin_test_3/rank_layups.py results/<run-id>/results.parquet \
+       --target-flex 12 --target-kick tip           # or --target-kick-frac 0.8
+```
+
+`dist = hypot((flex_n - target_flex)/flex_tol, kick_s_frac - target_frac)` with
+`--flex-tol` (default 2 N) setting the trade rate. Rows with a kick-point
+warning, an error, or no 90° are dropped and **counted** in the printout.
+Writes `ranked.csv` + a scatter SVG (flex vs kick fraction, target starred,
+top-N labelled). There is **no change-cost term yet** -- a later version will
+rank "move a zone boundary < change a ply count < swap a fabric".
+
 ### The knobs
 
 You are always changing the ply book (or, less often, the zone geometry). Two

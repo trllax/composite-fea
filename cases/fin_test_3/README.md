@@ -7,7 +7,9 @@ Named shells: `FULL`, `3_4ths`, `MID`, `QUARTER`, `HEAL`, `TIP`.
 Use `--long-axis y`. Mesh at 16 mm for quads (40 mm falls under the 98% floor).
 
 This file is the physics and the validation. **`DESIGNING.md` is the operator
-recipe** -- the loop you run to hit a target flex and kick point.
+recipe** -- the loop you run to hit a target flex and kick point, by hand
+(`run_tipweight.py`) or over a grid (`sweep_layups.py` + `rank_layups.py`, fed a
+`TaperDesign` JSON like `designs_example.json`).
 
 ## Shop layup (initial)
 

@@ -1,0 +1,25 @@
+{
+  "_comment": "Input for cases/fin_test_3/sweep_layups.py. A TaperDesign 'base' plus 'axes' whose Cartesian product is the grid. Each axis key is a top-level design field (core, skins, pad_order, core_center) or 'pads.<ZONE>'. PlySpec is [material, angle_deg]; thickness comes from the shop inventory. Symmetric by construction: core and each pad half-stack are mirrored about the mid-plane.",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["hexcel_im7_twill_205", 0]],
+    "core": [["hexcel_im2_uni_193", 0]],
+    "core_center": null,
+    "pads": {
+      "TIP": [["hexcel_im2_uni_193", 0]],
+      "QUARTER": [["hexcel_im7_twill_205", 0]],
+      "HEAL": [["hexcel_im7_twill_205", 0]]
+    },
+    "pad_order": ["TIP", "MID", "QUARTER", "HEAL"]
+  },
+  "axes": {
+    "core": [
+      [["hexcel_im2_uni_193", 0]],
+      [["hexcel_im2_uni_193", 0], ["hexcel_himax_biax_100", 0]]
+    ],
+    "pads.HEAL": [
+      [["hexcel_im7_twill_205", 0]],
+      [["hexcel_im7_twill_205", 0], ["hexcel_im2_uni_193", 0]]
+    ]
+  }
+}

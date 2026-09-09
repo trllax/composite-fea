@@ -59,12 +59,15 @@ src/compfea/
   stress.py       .dat ply stresses un-rotated into the material frame
   materials.py    materials CSV -> lamina cards; units declared, then checked
   plybook.py      ply-book CSV -> a Layup bound to the mesh's named zones
+  plybook_gen.py  TaperDesign (skins/core/pads over named zones) -> ply-book
+                  rows; symmetric by construction; the sweep's design vector
   abd.py          CLPT A/B/D per zone; the pre-solve cross-check against ACP
   build.py        compfea-build: STEP + ply book + materials -> deck + reports
 materials/        generic.csv (the shipped cards) + an empty ANSYS template
 cases/
   fin_test_3/          the current fin method: STEP + shop plybook + tip-weight
-                       buckling bench; run_tipweight.py is the front door,
+                       buckling bench; run_tipweight.py is the front door for one
+                       layup, sweep_layups.py + rank_layups.py for a grid,
                        DESIGNING.md is the layup-to-target recipe
   fin_zoned/           the design front door on a real STEP
   smoke_cantilever/    32 elements, ~1 s, hand CLPT + closed-form elastica
