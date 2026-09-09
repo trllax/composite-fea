@@ -261,3 +261,19 @@ def test_solve_phash_moves_with_kick_bands():
     assert sl.solve_phash(kick_bands=41, **common) == sl.solve_phash(
         kick_bands=41, **common
     )
+
+
+def test_solve_phash_moves_with_twist_probe():
+    common = dict(
+        materials=Path("materials/from_shop.csv"),
+        size_mm=16.0, uy_frac=0.6, bow_tip_mm=0.5, kick_bands=41,
+    )
+    # a twist-probe run must not collide with a plain run's cache
+    assert sl.solve_phash(**common) != sl.solve_phash(twist_probe=True, **common)
+    # nor two twist runs with different couple forces
+    assert sl.solve_phash(
+        twist_probe=True, twist_cload_n=5.0, **common
+    ) != sl.solve_phash(twist_probe=True, twist_cload_n=10.0, **common)
+    assert sl.solve_phash(twist_probe=True, **common) == sl.solve_phash(
+        twist_probe=True, **common
+    )

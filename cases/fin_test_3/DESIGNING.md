@@ -198,6 +198,46 @@ a clean single hump = a well-defined kick; a flat top or two humps = ambiguous.
 the line coloured by local `|kappa|`, the kick point ringed at both load states.
 This is the human picture: you can see the fold sit in the open blade.
 
+## Tip twist stiffness (`--twist-probe`)
+
+Two blades can land on the same flex and kick point and still differ in how the
+loaded blade resists a **twist** — the thing biax / ±45 / transverse plies buy.
+`run_tipweight.py --twist-probe` appends a small `+F / −F` force couple on the
+tip chord edges of the buckled blade and writes `twist.json` with
+`k_twist_nmm_per_rad = couple / twist_angle` (a moment about global z, over the
+deformed chord).
+
+- **Comparative only.** No closed form; the absolute value is not meaningful.
+  Larger is stiffer is better. Compare `k_twist` only between layups run the same
+  way (same `--twist-cload-n`, same `--size-mm`) **and that reach a similar
+  `theta_at_probe_deg`** — the z-couple is a pure twist only near 90°, so a wide
+  θ spread across the compared set makes the ranking meaningless. Check the
+  `theta_at_probe_deg` column before using `--twist-tiebreak`.
+- It rewards `D66` / `A66`: swapping a 0 or 90 ply for a ±45 pair should raise
+  `k_twist` sharply. If it does not, look hard at the layup before trusting it.
+- A **force** couple, not a prescribed rotation, because an unsymmetric layup has
+  rolled the tip edge by ~90° so its nodes sit at unknown axial positions. Tune
+  `--twist-cload-n` so the reported `twist_angle` lands in ~0.1..2°.
+- `--twist-probe` does **not** change the drive `--uy-frac`; the probe is read
+  wherever the drive step ends (θ recorded).
+- **Warnings** in `twist.json` (`warning` field): `theta_at_probe` outside
+  45..135° (`k_twist` not usable); twist angle below 0.03° (then
+  `k_twist_nmm_per_rad` is **`null`** — raise `--twist-cload-n`) or above 3°
+  (lower it); leading/trailing edge motion very asymmetric (strong bend-twist
+  coupling / roll — the comparison is soft); large heel RF swing. A warned or
+  `null`-`k_twist` row is **kept** by the ranker but does **not** compete on
+  twist in `--twist-tiebreak` — it keeps its `dist` order.
+- Non-convergence of the twist step means the section has no positive torsional
+  stiffness there. It fails loudly (no `twist.json`); do not work around it.
+
+In the sweep: `sweep_layups.py --twist-probe` adds `k_twist_nmm_per_rad`,
+`twist_angle_deg`, `theta_at_probe_deg`, `twist_le_te_asymmetry`,
+`twist_warning` to `results.parquet` (roughly 2× the solve cost; adding
+`--twist-probe` also changes `solve_phash`, so the first twist run re-solves
+every design). `rank_layups.py --twist-tiebreak` then re-orders rows in the same
+`--tie-eps`-wide `dist` bin by descending `k_twist` — stiffer in torsion wins
+when flex and kick are a wash.
+
 ## What kappa is (one paragraph)
 
 `kappa` is curvature — 1 / (local bend radius), in 1/mm. It is built per span
@@ -242,5 +282,11 @@ increment where the canonical clip→`tip_band` angle is 90 deg.
   kick reduction on top of it (uniform column → heel; synthetic hinge at
   `0.5 L` → mid; at `0.78 L` → tip). There is deliberately no skip on a missing
   `ccx`.
+- `pytest tests/test_twist.py` gates the tip twist metric: the `twist_couple_body`
+  cards, the chordwise `twist_le` / `twist_te` split, `k_twist` (and the `None`
+  case) from a hand-written `.dat`, and end to end that a `[±45]s` strip is more
+  than 1.5× the tip twist stiffness of a `[0]4` strip of equal thickness
+  (observed ~2×), repeatable under `n_span` + `n_chord` refinement. Also no skip
+  on a missing `ccx`.
 - If a change breaks one, fix the change — do not widen a tolerance or move an
   expected value.

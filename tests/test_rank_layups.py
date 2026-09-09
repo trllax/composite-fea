@@ -75,6 +75,77 @@ def test_rank_distance_is_euclidean_in_scaled_axes():
     )
 
 
+def test_twist_tiebreak_orders_ties_by_k_twist():
+    # three designs at essentially the same (flex, kick) distance, different
+    # k_twist. Without the flag, stable sort keeps input order; with it, the
+    # stiffest-in-torsion comes first within the tie band.
+    frame = pd.DataFrame(
+        [
+            ("soft",  "ok", 12.0, 0.80, None, 4000.0),
+            ("stiff", "ok", 12.0, 0.80, None, 9000.0),
+            ("mid",   "ok", 12.0, 0.80, None, 6000.0),
+            ("far",   "ok", 6.0,  0.80, None, 99000.0),  # far in flex, must stay last
+        ],
+        columns=[
+            "fingerprint", "status", "flex_n", "kick_s_frac", "warning",
+            "k_twist_nmm_per_rad",
+        ],
+    )
+    plain = list(
+        rl.rank(frame, target_flex=12.0, target_frac=0.8, flex_tol=2.0)["fingerprint"]
+    )
+    assert plain == ["soft", "stiff", "mid", "far"]
+
+    tied = list(
+        rl.rank(
+            frame, target_flex=12.0, target_frac=0.8, flex_tol=2.0,
+            twist_tiebreak=True, tie_eps=0.05,
+        )["fingerprint"]
+    )
+    assert tied == ["stiff", "mid", "soft", "far"]
+
+
+def test_twist_tiebreak_does_not_promote_warned_or_null_twist_rows():
+    frame = pd.DataFrame(
+        [
+            ("warned", "ok", 12.0, 0.80, None, 9000.0, "le/te asym 0.4"),
+            ("null",   "ok", 12.0, 0.80, None, None,    None),
+            ("good",   "ok", 12.0, 0.80, None, 3000.0,  None),
+        ],
+        columns=[
+            "fingerprint", "status", "flex_n", "kick_s_frac", "warning",
+            "k_twist_nmm_per_rad", "twist_warning",
+        ],
+    )
+    ranked = rl.rank(
+        frame, target_flex=12.0, target_frac=0.8, flex_tol=2.0, twist_tiebreak=True
+    )
+    # all three kept (warned/null twist is a caution, not a drop) ...
+    assert set(ranked["fingerprint"]) == {"warned", "null", "good"}
+    # ... but "good" (only twist-eligible row) wins the tie despite the lowest
+    # k_twist; "warned" is not promoted by its large-but-suspect number.
+    assert ranked["fingerprint"].iloc[0] == "good"
+
+
+def test_twist_tiebreak_no_op_on_a_plain_sweep():
+    # a non-twist sweep parquet has the column, all NaN -> tiebreak must not
+    # reorder or crash
+    frame = pd.DataFrame(
+        [
+            ("x", "ok", 12.0, 0.80, None, math.nan),
+            ("y", "ok", 12.1, 0.80, None, math.nan),
+        ],
+        columns=[
+            "fingerprint", "status", "flex_n", "kick_s_frac", "warning",
+            "k_twist_nmm_per_rad",
+        ],
+    )
+    ranked = rl.rank(
+        frame, target_flex=12.0, target_frac=0.8, flex_tol=2.0, twist_tiebreak=True
+    )
+    assert list(ranked["fingerprint"]) == ["x", "y"]
+
+
 def test_flex_tol_reweights_the_axes():
     tight = rl.rank(_frame(), target_flex=12.0, target_frac=0.8, flex_tol=2.0)
     # tight flex tolerance: the 6 N design is by far the worst

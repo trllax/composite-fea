@@ -6,6 +6,12 @@ solve, unchanged -> ``flex_kick.json``. Every run is collected into
 ``results/<run_id>/results.parquet`` with the design's parameters flattened
 alongside its flex and kick numbers.
 
+With ``--twist-probe`` each solve also appends the tip twist probe and the row
+gains ``k_twist_nmm_per_rad`` (comparative torsional stiffness, larger is
+stiffer), ``twist_angle_deg``, ``theta_at_probe_deg``,
+``twist_le_te_asymmetry`` and ``twist_warning``. Those columns are present but
+all ``None`` on a sweep run without the flag.
+
 Input is a JSON file, one of:
 
 - a bare list ``[{design}, {design}, ...]``;
@@ -109,10 +115,12 @@ def _run_tipweight_solve(
     *,
     materials: Path,
     size_mm: float,
-    uy_frac: float,
+    uy_frac: float | None,
     bow_tip_mm: float,
     kick_bands: int,
     timeout_s: float,
+    twist_probe: bool = False,
+    twist_cload_n: float = 0.3,
 ) -> None:
     """Invoke ``run_tipweight.py`` unchanged for one ply book. Raises on failure.
 
@@ -126,13 +134,18 @@ def _run_tipweight_solve(
         "--plybook", str(plybook_path),
         "--materials", str(materials),
         "--size-mm", str(size_mm),
-        "--uy-frac", str(uy_frac),
         "--bow-tip-mm", str(bow_tip_mm),
         "--kick-bands", str(kick_bands),
         "--threads", "1",
         "--timeout-s", str(timeout_s),
         "--run-dir", str(run_dir),
     ]
+    # run_sweep always resolves uy_frac (0.60 default), so this branch always
+    # fires; the guard is only for a direct unit-test call passing None.
+    if uy_frac is not None:
+        cmd += ["--uy-frac", str(uy_frac)]
+    if twist_probe:
+        cmd += ["--twist-probe", "--twist-cload-n", str(twist_cload_n)]
     env = {**os.environ, "OMP_NUM_THREADS": "1"}
     with (run_dir / "run.log").open("w") as log:
         subprocess.run(
@@ -150,26 +163,32 @@ def solve_phash(
     *,
     materials: Path,
     size_mm: float,
-    uy_frac: float,
+    uy_frac: float | None,
     bow_tip_mm: float,
     kick_bands: int,
+    twist_probe: bool = False,
+    twist_cload_n: float = 0.3,
 ) -> str:
     """8-hex hash of everything that changes the *solve* but not the laminate.
 
     ``design_fingerprint`` identifies the laminate; this identifies the bench
     run around it -- the drive fraction, the seed bow, the band count (which is
     baked into the ``*NODE PRINT`` stations, so a cached ``flex_kick.json`` from
-    a different count is stale, not re-analysable), the mesh size, and the bytes
-    of the materials file and the STEP. The cache dir is keyed on both, so
-    ``--kick-bands 41`` then ``--kick-bands 81`` under one ``--run-id`` misses
-    rather than serving the 41-band result.
+    a different count is stale, not re-analysable), whether the twist probe ran
+    and its swing, the mesh size, and the bytes of the materials file and the
+    STEP. The cache dir is keyed on both, so ``--kick-bands 41`` then
+    ``--kick-bands 81`` under one ``--run-id`` misses rather than serving the
+    41-band result.
 
     Everything else reaching ``run_tipweight`` is its default and constant across
     a sweep (``--clip-n``, ``--gravity``, ``--static-line``). If a flag for one
     of those is ever added here, add it to this hash too.
     """
     h = hashlib.sha256()
-    h.update(f"{size_mm}|{uy_frac}|{bow_tip_mm}|{kick_bands}".encode())
+    h.update(
+        f"{size_mm}|{uy_frac}|{bow_tip_mm}|{kick_bands}|"
+        f"{twist_probe}|{twist_cload_n}".encode()
+    )
     for path in (Path(materials), ROOT / "FIN_TEST_3.step"):
         h.update(path.read_bytes() if path.is_file() else b"<missing>")
     return h.hexdigest()[:8]
@@ -188,24 +207,33 @@ def solve_one(
     skus,
     materials: Path,
     size_mm: float,
-    uy_frac: float,
+    uy_frac: float | None,
     bow_tip_mm: float,
     kick_bands: int,
     timeout_s: float,
+    twist_probe: bool = False,
+    twist_cload_n: float = 0.3,
 ) -> dict:
     """Resolve, solve (or hit cache), read ``flex_kick.json`` -> a result row."""
     fp = design_fingerprint(design, skus=skus)
     phash = solve_phash(
         materials=materials, size_mm=size_mm, uy_frac=uy_frac,
         bow_tip_mm=bow_tip_mm, kick_bands=kick_bands,
+        twist_probe=twist_probe, twist_cload_n=twist_cload_n,
     )
     run_dir = cache_dir / f"{fp}.{phash}"
     run_dir.mkdir(parents=True, exist_ok=True)
     fk_path = run_dir / "flex_kick.json"
+    tw_path = run_dir / "twist.json"
+    # The cache sentinel: with --twist-probe, run_tipweight writes flex_kick.json
+    # *before* the twist read, so a twist run that failed in twist_stiffness
+    # still leaves flex_kick.json behind. Require twist.json too, or a rerun
+    # would serve that partial result as a twist-less "ok".
+    sentinel = tw_path if twist_probe else fk_path
 
     row: dict = {"fingerprint": fp, **_flatten_design(design)}
-    row["cached"] = fk_path.is_file()
-    if not fk_path.is_file():
+    row["cached"] = sentinel.is_file()
+    if not sentinel.is_file():
         write_plybook(
             design, run_dir / "plybook.csv", skus=skus, note=f"sweep design {fp}"
         )
@@ -218,9 +246,13 @@ def solve_one(
             bow_tip_mm=bow_tip_mm,
             kick_bands=kick_bands,
             timeout_s=timeout_s,
+            twist_probe=twist_probe,
+            twist_cload_n=twist_cload_n,
         )
     if not fk_path.is_file():
         raise RuntimeError(f"{fk_path} not written; see {run_dir / 'run.log'}")
+    if twist_probe and not tw_path.is_file():
+        raise RuntimeError(f"{tw_path} not written; see {run_dir / 'run.log'}")
 
     fk = json.loads(fk_path.read_text())
     head = fk.get("headline") or {}
@@ -238,6 +270,17 @@ def solve_one(
         n_plies_total=len(all_rows),
         through_n_plies=len(through_rows),
         through_thickness_mm=sum(r.thickness_mm for r in through_rows),
+    )
+    # Comparative torsional stiffness, if the twist probe ran. Absent (all None)
+    # otherwise, so the column set is stable across twist / non-twist sweeps.
+    tw_path = run_dir / "twist.json"
+    tw = json.loads(tw_path.read_text()) if tw_path.is_file() else {}
+    row.update(
+        k_twist_nmm_per_rad=tw.get("k_twist_nmm_per_rad"),
+        twist_angle_deg=tw.get("phi_deg"),
+        theta_at_probe_deg=tw.get("theta_at_probe_deg"),
+        twist_le_te_asymmetry=tw.get("le_te_asymmetry"),
+        twist_warning=tw.get("warning"),
     )
     return row
 
@@ -267,10 +310,12 @@ def run_sweep(
     materials: Path,
     inventory: Path,
     size_mm: float,
-    uy_frac: float,
+    uy_frac: float | None,
     bow_tip_mm: float,
     kick_bands: int,
     timeout_s: float,
+    twist_probe: bool = False,
+    twist_cload_n: float = 0.3,
 ) -> pd.DataFrame:
     run_root.mkdir(parents=True, exist_ok=True)
     cache_dir = run_root / "cache"
@@ -287,6 +332,8 @@ def run_sweep(
         "bow_tip_mm": bow_tip_mm,
         "kick_bands": kick_bands,
         "timeout_s": timeout_s,
+        "twist_probe": twist_probe,
+        "twist_cload_n": twist_cload_n,
     }
     # Collapse designs that resolve to the same laminate: they share a cache
     # dir, so solving both would race two ccx runs into one directory (job
@@ -398,9 +445,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--materials", type=Path, default=DEFAULT_MATERIALS)
     p.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     p.add_argument("--size-mm", type=float, default=16.0)
-    p.add_argument("--uy-frac", type=float, default=0.60)
+    p.add_argument(
+        "--uy-frac",
+        type=float,
+        default=None,
+        help="axial drive fraction (default 0.60); must bracket theta = 90 deg "
+        "for every design or its flex_n is null and rank_layups drops it",
+    )
     p.add_argument("--bow-tip-mm", type=float, default=0.5)
     p.add_argument("--kick-bands", type=int, default=41)
+    p.add_argument(
+        "--twist-probe",
+        action="store_true",
+        help="also run the tip twist probe per layup and record k_twist "
+        "(N.mm/rad) + its checks; roughly doubles the solve cost",
+    )
+    p.add_argument("--twist-cload-n", type=float, default=0.3)
     p.add_argument(
         "--jobs", type=int, default=None, help="default cpu_count() - 2"
     )
@@ -424,6 +484,11 @@ def main(argv: list[str] | None = None) -> int:
     if not designs:
         raise SystemExit(f"{args.designs}: no designs")
 
+    # 0.60 L is the sweep drive default with or without --twist-probe: the drive
+    # must bracket theta = 90 deg or flex_n comes back null and rank_layups
+    # silently drops the design. The twist probe reads wherever the drive ends.
+    uy_frac = args.uy_frac if args.uy_frac is not None else 0.60
+
     run_id = args.run_id or _run_id()
     run_root = ROOT / "results" / run_id
 
@@ -441,10 +506,12 @@ def main(argv: list[str] | None = None) -> int:
             materials=args.materials,
             inventory=args.inventory,
             size_mm=args.size_mm,
-            uy_frac=args.uy_frac,
+            uy_frac=uy_frac,
             bow_tip_mm=args.bow_tip_mm,
             kick_bands=args.kick_bands,
             timeout_s=args.timeout_s,
+            twist_probe=args.twist_probe,
+            twist_cload_n=args.twist_cload_n,
         )
     except BaseException as exc:
         # A crash in the (usually detached) worker must not leave status.json

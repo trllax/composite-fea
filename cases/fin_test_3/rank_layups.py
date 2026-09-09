@@ -70,6 +70,8 @@ def rank(
     target_frac: float,
     flex_tol: float,
     require_bucket: str | None = None,
+    twist_tiebreak: bool = False,
+    tie_eps: float = 0.05,
 ) -> pd.DataFrame:
     """Filtered, distance-scored, ascending. Pure; no I/O.
 
@@ -77,17 +79,29 @@ def rank(
     use it when the kick bucket is a requirement, not a preference, since the
     distance metric alone lets a close flex match outrank a whole bucket.
 
+    ``twist_tiebreak`` re-orders rows that fall in the same ``tie_eps``-wide
+    ``dist`` bin by descending ``k_twist_nmm_per_rad`` -- stiffer in torsion wins
+    when flex and kick are a wash. Only rows with a **finite** ``k_twist`` and
+    **no** ``twist_warning`` compete on twist; the rest keep their ``dist`` order
+    within the bin (a warned or ``None`` k_twist is not evidence of stiffness).
+    Needs a ``--twist-probe`` sweep; on a plain sweep the column is all-null so
+    the re-order is a no-op. Bins are ``round(dist / tie_eps)``, so the tie
+    boundary is discontinuous -- two rows on opposite sides of a bin edge are not
+    tied even if closer than ``tie_eps``.
+
     Empty frame in -> empty frame out (an all-error sweep writes a parquet with
     no ``flex_n`` column); the caller turns that into a clear exit.
     """
     if flex_tol <= 0.0:
         raise SystemExit("--flex-tol must be > 0")
+    if tie_eps <= 0.0:
+        raise SystemExit("--tie-eps must be > 0")
     keep = df.copy()
     if "status" in keep.columns:
         keep = keep[keep["status"] == "ok"]
     if "flex_n" not in keep.columns or "kick_s_frac" not in keep.columns:
         return keep.iloc[0:0]
-    keep = keep[keep["flex_n"].notna()]
+    keep = keep[keep["flex_n"].notna() & keep["kick_s_frac"].notna()]
     if "warning" in keep.columns:
         keep = keep[~_warned(keep["warning"])]
     if require_bucket is not None and "kick_bucket" in keep.columns:
@@ -96,7 +110,32 @@ def rank(
     keep["flex_dist"] = (keep["flex_n"] - target_flex) / flex_tol
     keep["kick_dist"] = keep["kick_s_frac"] - target_frac
     keep["dist"] = np.hypot(keep["flex_dist"], keep["kick_dist"])
-    return keep.sort_values("dist", kind="stable").reset_index(drop=True)
+
+    kt = (
+        pd.to_numeric(keep["k_twist_nmm_per_rad"], errors="coerce").to_numpy()
+        if "k_twist_nmm_per_rad" in keep.columns
+        else np.array([])
+    )
+    twistable = twist_tiebreak and kt.size and np.isfinite(kt).any()
+    if twistable:
+        ok_twist = np.isfinite(kt)
+        if "twist_warning" in keep.columns:
+            ok_twist &= ~_warned(keep["twist_warning"]).to_numpy()
+        # sort key: bin ascending, then (twist-eligible rows by -k_twist),
+        # (ineligible rows keep dist). Give ineligible rows a sentinel that
+        # sorts after every real k_twist within the bin.
+        sentinel = float(np.nanmin(kt)) - 1.0 if ok_twist.any() else 0.0
+        keep = keep.assign(
+            _bin=(keep["dist"] / tie_eps).round().astype("int64"),
+            _kt=np.where(ok_twist, kt, sentinel),
+        ).sort_values(
+            ["_bin", "_kt", "dist"],
+            ascending=[True, False, True],
+            kind="stable",
+        ).drop(columns=["_bin", "_kt"])
+    else:
+        keep = keep.sort_values("dist", kind="stable")
+    return keep.reset_index(drop=True)
 
 
 def _scatter(
@@ -160,6 +199,18 @@ def build_parser() -> argparse.ArgumentParser:
         "scoring. Use when the bucket is a requirement, not a preference.",
     )
     p.add_argument("--flex-tol", type=float, default=2.0)
+    p.add_argument(
+        "--twist-tiebreak",
+        action="store_true",
+        help="break near-ties in dist by descending k_twist (needs a "
+        "--twist-probe sweep); stiffer in torsion wins a wash",
+    )
+    p.add_argument(
+        "--tie-eps",
+        type=float,
+        default=0.05,
+        help="dist window that counts as a tie for --twist-tiebreak",
+    )
     p.add_argument("--top", type=int, default=10, help="rows to label on the plot")
     p.add_argument(
         "--out", type=Path, default=None, help="ranked CSV (default: next to parquet)"
@@ -179,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         target_frac=target_frac,
         flex_tol=args.flex_tol,
         require_bucket=args.require_bucket,
+        twist_tiebreak=args.twist_tiebreak,
+        tie_eps=args.tie_eps,
     )
     reasons = drop_reasons(df)
     n_dropped = sum(reasons.values())
@@ -212,7 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         c
         for c in (
             "fingerprint", "flex_n", "kick_bucket", "kick_s_frac",
-            "migration_delta_mm", "through_thickness_mm", "dist", "core",
+            "k_twist_nmm_per_rad", "migration_delta_mm", "through_thickness_mm",
+            "dist", "core",
         )
         if c in ranked.columns
     ]

@@ -31,9 +31,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from compfea import kick
+from compfea import kick, twist
 from compfea.build import build
-from compfea.deck import StaticStep, assemble, axial_drive_body
+from compfea.deck import StaticStep, assemble, axial_drive_body, twist_couple_body
 from compfea.geometry import Mesh
 from compfea.kick import read_set_disp  # re-export: the one .dat U reader
 from compfea.layup import coverages_from_mesh, mesh_elsets_for_stacks
@@ -46,6 +46,12 @@ from compfea.ubend import tip_length_mm
 ROOT = Path(__file__).resolve().parents[2]
 STEP = ROOT / "FIN_TEST_3.step"
 LONG_AXIS = "y"
+
+# static_line for the twist couple steps: a small load perturbation on the
+# already-buckled state -- try a quarter step, take the whole step in one
+# increment if it will, and a tight floor so a torsionally unstable section
+# fails fast instead of grinding.
+TWIST_STATIC_LINE = "0.25, 1.0, 1.E-6, 1.0"
 # The fin diverges even at 0.25 on the circular-arc path (cases/step_fin); the
 # buckling ramp is gentler but still wants a tight cap. Re-calibrate per part.
 FIN_STATIC_LINE = "0.002, 1.0, 1.E-10, 0.05"
@@ -216,7 +222,12 @@ def _centroid(mesh: Mesh, nset: str) -> np.ndarray:
 
 
 def collect(
-    run_dir: Path, mesh: Mesh, *, long_axis: str, time_min: float = 0.0
+    run_dir: Path,
+    mesh: Mesh,
+    *,
+    long_axis: str,
+    time_min: float = 0.0,
+    time_max: float = math.inf,
 ) -> pd.DataFrame:
     """Per-increment W, axial shortening, energy and tip angle, from the .dat only.
 
@@ -227,7 +238,8 @@ def collect(
     Tip angle comes from two *NODE PRINT / U stations (deck nodes), not the .frd:
     ccx's expanded solid mesh fans one planform station into many wherever the
     shell normal is tilted, so a midsurface fit there is unreliable on a
-    non-flat blade. ``time_min`` skips a gravity-settle pre-step.
+    non-flat blade. ``time_min`` skips a gravity-settle pre-step; ``time_max``
+    keeps a following twist-probe step out of the W(theta) curve.
     """
     axis = _axis_index(long_axis)
     comp = ("fx", "fy", "fz")[axis]
@@ -248,7 +260,7 @@ def collect(
     # never paired with another increment's.
     rows = []
     for t, cu in sorted(clip_u.items()):
-        if t <= time_min + 1e-9:
+        if t <= time_min + 1e-9 or t > time_max + 1e-9:
             continue
         if t not in band_u or t not in clip_rf.index or t not in blade.index:
             continue
@@ -356,11 +368,36 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--uy-frac",
         type=float,
-        default=0.45,
-        help="axial drive as a fraction of the free tip length "
-        "(~0.39 L reaches theta = 90 deg for the shop plybook; 0.45 brackets it)",
+        default=None,
+        help="axial drive as a fraction of the free tip length (default 0.45; "
+        "~0.39 L reaches theta = 90 deg for the shop plybook, 0.45 brackets it). "
+        "--twist-probe does not change this; the twist probe is read wherever the "
+        "drive step ends and that theta is recorded in twist.json",
     )
     p.add_argument("--clip-n", type=int, default=3)
+    p.add_argument(
+        "--twist-probe",
+        action="store_true",
+        help="append a +F/-F tip force-couple twist on the buckled state and "
+        "write twist.json with the comparative torsional stiffness k_twist "
+        "(N.mm/rad). Larger is stiffer; the number has no closed form and is "
+        "only meaningful relative to other layups run the same way",
+    )
+    p.add_argument(
+        "--twist-cload-n",
+        type=float,
+        default=0.3,
+        help="per-node force of the twist couple, N (applied +this on the "
+        "leading chord edge, -this on the trailing). Tune so the resulting "
+        "twist angle in twist.json lands in ~0.1..2 deg",
+    )
+    p.add_argument(
+        "--twist-chord-frac-min",
+        type=float,
+        default=0.55,
+        help="a tip-edge node joins twist_le/twist_te only if its chord offset "
+        "is at least this fraction of the half-chord",
+    )
     p.add_argument(
         "--kick-bands",
         type=int,
@@ -434,16 +471,38 @@ def main(argv: list[str] | None = None) -> int:
                 exclude=exclude,
             )
         )
+    if args.twist_probe:
+        extra.update(
+            twist.tip_chord_nsets(
+                mesh,
+                long_axis=LONG_AXIS,
+                chord_frac_min=args.twist_chord_frac_min,
+                exclude=set(clip) | set(mesh.nsets["fixed_end"]),
+            )
+        )
     band_names = tuple(n for n in extra if n.startswith(kick.BAND_PREFIX))
     mesh = dataclasses.replace(mesh, nsets={**mesh.nsets, **extra})
 
     axis = _axis_index(LONG_AXIS)
     _, tipward = _clamp_face(mesh, axis)
+
+    # Default drive: 0.45 L, which brackets theta = 90 deg for the shop layup.
+    # --twist-probe does NOT change this -- the sweep needs the drive to bracket
+    # 90 deg or flex_n comes back null. The twist probe is read wherever the
+    # drive step ends; that theta is recorded in twist.json and k_twist is only
+    # comparable across layups that reach a similar one.
+    uy_frac = args.uy_frac if args.uy_frac is not None else 0.45
     # Compression drives the clip toward the clamp face -- against tip-ward. The
     # hung weight and gravity pull the same way, so gravity points there too.
-    value = -tipward * args.uy_frac * length
+    value = -tipward * uy_frac * length
     grav_dir = [0.0, 0.0, 0.0]
     grav_dir[axis] = -tipward
+
+    # With --twist-probe the drive step also prints the tip-edge U, the baseline
+    # the couple swing is measured against.
+    drive_tangents = ("tip_band", *band_names)
+    if args.twist_probe:
+        drive_tangents = (*drive_tangents, twist.LE_NAME, twist.TE_NAME)
 
     steps: list[StaticStep] = []
     if args.gravity > 0.0:
@@ -457,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
                     drive=False,
                     gravity=(g_mm, grav_dir),
                     read_nset="fixed_end",
-                    tangent_nsets=("tip_band", *band_names),
+                    tangent_nsets=drive_tangents,
                 ),
                 inc=40000,
                 static_line=args.static_line,
@@ -472,12 +531,34 @@ def main(argv: list[str] | None = None) -> int:
                 axis + 1,
                 value,
                 read_nset="fixed_end",
-                tangent_nsets=("tip_band", *band_names),
+                tangent_nsets=drive_tangents,
             ),
             inc=40000,
             static_line=args.static_line,
         )
     )
+    drive_end_time = float(len(steps))
+
+    if args.twist_probe:
+        # +F then -F on the tip chord edges from the same held buckled state. ccx
+        # carries the drive (clip) and clamp (fixed_end) *BOUNDARY forward; the
+        # second couple step passes OP=NEW so its *CLOAD replaces the first's.
+        # The swing differences out the roll an unsymmetric layup has at 90 deg.
+        for sgn in (1.0, -1.0):
+            steps.append(
+                StaticStep(
+                    twist_couple_body(
+                        le_nset=twist.LE_NAME,
+                        te_nset=twist.TE_NAME,
+                        force=sgn * args.twist_cload_n,
+                        dof=axis + 1,
+                        op_new=sgn < 0.0,
+                    ),
+                    inc=2000,
+                    static_line=TWIST_STATIC_LINE,
+                )
+            )
+
     final_time = float(len(steps))
     deck = assemble(
         mesh_inp=mesh.to_inp(),
@@ -486,8 +567,13 @@ def main(argv: list[str] | None = None) -> int:
         steps=steps,
         heading=(
             f"FIN_TEST_3 tip-weight plybook={args.plybook.name} "
-            f"L={length:.3f} mm axial drive {value:.2f} mm ({args.uy_frac:g} L), "
+            f"L={length:.3f} mm axial drive {value:.2f} mm ({uy_frac:g} L), "
             f"bow {args.bow_tip_mm:g} mm, gravity {args.gravity:g} m/s^2"
+            + (
+                f", twist couple +/-{args.twist_cload_n:g} N/node"
+                if args.twist_probe
+                else ""
+            )
         ),
     )
     deck_path = args.run_dir / "deck.inp"
@@ -496,6 +582,7 @@ def main(argv: list[str] | None = None) -> int:
         f"deck {deck_path} elems={len(mesh.elements)} L={length:.2f} mm "
         f"clip={clip} drive_dof={axis + 1} value={value:.2f} mm "
         f"steps={len(steps)} gravity={args.gravity:g} "
+        f"twist_probe={args.twist_probe} "
         f"mats={[m.name for m in layup.materials]}"
     )
 
@@ -525,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
         mesh,
         long_axis=LONG_AXIS,
         time_min=1.0 if args.gravity > 0.0 else 0.0,
+        time_max=drive_end_time,
     )
     report(df, args.run_dir, bench_n=args.bench_n, bench_deg=args.bench_deg)
     print(f"wrote {args.run_dir / 'W_vs_theta.csv'} and .svg  ({len(df)} points)")
@@ -573,6 +661,45 @@ def main(argv: list[str] | None = None) -> int:
             f"wrote {args.run_dir / 'flex_kick.json'}, kick_kappa.svg and "
             f"kick_shape.svg"
         )
+
+    if args.twist_probe:
+        # theta at the probe = the canonical clip -> tip_band angle at the end of
+        # the drive step (df is bounded to the drive step by time_max).
+        by_time = df.sort_values("time")
+        theta_probe = float(
+            np.interp(
+                drive_end_time,
+                by_time["time"].to_numpy(),
+                by_time["theta_deg"].to_numpy(),
+            )
+        )
+        tw = twist.twist_stiffness(
+            args.run_dir / "ccx" / "job.dat",
+            mesh,
+            le_nset=twist.LE_NAME,
+            te_nset=twist.TE_NAME,
+            drive_end_time=drive_end_time,
+            plus_time=drive_end_time + 1.0,
+            minus_time=drive_end_time + 2.0,
+            force_n=args.twist_cload_n,
+            theta_at_probe_deg=theta_probe,
+            long_axis=LONG_AXIS,
+        )
+        twist.write_twist_json(tw, args.run_dir / "twist.json")
+        k_str = (
+            f"{tw.k_twist_nmm_per_rad:.0f} N.mm/rad"
+            if tw.k_twist_nmm_per_rad is not None
+            else "None (unresolved swing)"
+        )
+        print(
+            f"k_twist = {k_str}  (comparative only)  "
+            f"probe theta = {theta_probe:.1f} deg  twist angle = {tw.phi_deg:.2f} deg  "
+            f"le/te asym = {tw.le_te_asymmetry:.2f}"
+        )
+        if tw.warning:
+            print(f"  WARNING: {tw.warning}")
+        print(f"wrote {args.run_dir / 'twist.json'}")
+
     return 0
 
 
