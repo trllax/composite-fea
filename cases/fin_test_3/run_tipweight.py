@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import math
-import re
 import sys
 from pathlib import Path
 
@@ -32,9 +31,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from compfea import kick
 from compfea.build import build
 from compfea.deck import StaticStep, assemble, axial_drive_body
 from compfea.geometry import Mesh
+from compfea.kick import read_set_disp  # re-export: the one .dat U reader
 from compfea.layup import coverages_from_mesh, mesh_elsets_for_stacks
 from compfea.materials import load_materials
 from compfea.plybook import load_plybook, resolve
@@ -180,37 +181,6 @@ def tip_band(
         )
     band.sort(key=lambda n: abs(mesh.nodes[n][across] - mid))
     return tuple(sorted(band[:k]))
-
-
-_DISP_HEADER = re.compile(
-    r"^\s*displacements \(vx,vy,vz\) for set (?P<nset>\S+) and time\s+(?P<time>\S+)\s*$"
-)
-
-
-def read_set_disp(dat_path: Path, nset: str) -> dict[float, tuple[float, float, float]]:
-    """Mean (ux, uy, uz) over ``nset`` per printed time, from *NODE PRINT / U."""
-    want = nset.upper()
-    out: dict[float, list[tuple[float, float, float]]] = {}
-    current: float | None = None
-    for line in dat_path.read_text().splitlines():
-        header = _DISP_HEADER.match(line)
-        if header:
-            current = float(header["time"]) if header["nset"] == want else None
-            if current is not None:
-                out.setdefault(current, [])
-            continue
-        if current is None or not line.strip():
-            continue
-        fields = line.split()
-        if len(fields) == 4 and fields[0].isdigit():
-            out[current].append(tuple(float(v) for v in fields[1:]))
-        else:
-            current = None
-    return {
-        t: tuple(sum(v[i] for v in rows) / len(rows) for i in range(3))
-        for t, rows in out.items()
-        if rows
-    }
 
 
 def station_tangent_deg(
@@ -392,6 +362,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--clip-n", type=int, default=3)
     p.add_argument(
+        "--kick-bands",
+        type=int,
+        default=21,
+        help="mid-chord U-print stations along the span for the kick-point "
+        "metric (0 disables it)",
+    )
+    p.add_argument(
         "--bow-tip-mm",
         type=float,
         default=0.0,
@@ -442,9 +419,23 @@ def main(argv: list[str] | None = None) -> int:
     mesh = _bow(mesh, args.bow_tip_mm, long_axis=LONG_AXIS, free_mm=length)
     clip = tip_clip(mesh, long_axis=LONG_AXIS, n=args.clip_n)
     band = tip_band(mesh, long_axis=LONG_AXIS)
-    mesh = dataclasses.replace(
-        mesh, nsets={**mesh.nsets, "clip": clip, "tip_band": band}
-    )
+    extra = {"clip": clip, "tip_band": band}
+    if args.kick_bands:
+        exclude = (
+            set(mesh.nsets["fixed_end"])
+            | set(mesh.nsets["far_face"])
+            | set(clip)
+        )
+        extra.update(
+            kick.span_band_nsets(
+                mesh,
+                long_axis=LONG_AXIS,
+                n_bands=args.kick_bands,
+                exclude=exclude,
+            )
+        )
+    band_names = tuple(n for n in extra if n.startswith(kick.BAND_PREFIX))
+    mesh = dataclasses.replace(mesh, nsets={**mesh.nsets, **extra})
 
     axis = _axis_index(LONG_AXIS)
     _, tipward = _clamp_face(mesh, axis)
@@ -466,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
                     drive=False,
                     gravity=(g_mm, grav_dir),
                     read_nset="fixed_end",
-                    tangent_nsets=("tip_band",),
+                    tangent_nsets=("tip_band", *band_names),
                 ),
                 inc=40000,
                 static_line=args.static_line,
@@ -481,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
                 axis + 1,
                 value,
                 read_nset="fixed_end",
-                tangent_nsets=("tip_band",),
+                tangent_nsets=("tip_band", *band_names),
             ),
             inc=40000,
             static_line=args.static_line,
@@ -537,6 +528,51 @@ def main(argv: list[str] | None = None) -> int:
     )
     report(df, args.run_dir, bench_n=args.bench_n, bench_deg=args.bench_deg)
     print(f"wrote {args.run_dir / 'W_vs_theta.csv'} and .svg  ({len(df)} points)")
+
+    if args.kick_bands:
+        # Flex and the load states to evaluate the kick point at both come from
+        # collect()'s canonical clip -> tip_band theta, so flex_kick's own
+        # band-centreline angle is never the number of record.
+        by_time = df.sort_values("time")
+        th, tm = by_time["theta_deg"].to_numpy(), by_time["time"].to_numpy()
+        w_n = by_time["W_N"].to_numpy()
+        bracketed = th.min() <= 90.0 <= th.max()
+        w90 = float(np.interp(90.0, th, w_n)) if bracketed else None
+        t_headline = float(np.interp(90.0, th, tm)) if bracketed else float(tm[-1])
+        t_migration = float(np.interp(15.0, th, tm))
+        fk = kick.flex_kick(
+            args.run_dir / "ccx" / "job.dat",
+            mesh,
+            time_headline=t_headline,
+            time_migration=t_migration,
+            flex_n=w90,
+            time_min=1.0 if args.gravity > 0.0 else 0.0,
+            out_dir=args.run_dir,
+        )
+        kick.write_flex_kick_json(fk, args.run_dir / "flex_kick.json")
+        hp = fk.headline
+        flex = (
+            f"{fk.flex_n:.2f} N" if fk.flex_n is not None
+            else "n/a (90 deg not reached)"
+        )
+        print(
+            f"flex = W(90 deg) = {flex}   "
+            f"kick = {hp.bucket.upper()}  s_kick = {hp.s_kick_mm:.0f} mm "
+            f"(f = {hp.s_kick_frac:.2f})  rot-median f = {hp.s_rotmed_frac:.2f}  "
+            f"band tip tangent ~{hp.theta_deg:.0f} deg"
+        )
+        mig = fk.migration
+        print(
+            f"  kick point migrates {fk.migration_delta_mm:+.0f} mm from "
+            f"theta~{mig.theta_deg:.0f} deg (f = {mig.s_kick_frac:.2f}) "
+            f"to theta~{hp.theta_deg:.0f} deg (f = {hp.s_kick_frac:.2f})"
+        )
+        if hp.warning:
+            print(f"  WARNING: {hp.warning}")
+        print(
+            f"wrote {args.run_dir / 'flex_kick.json'}, kick_kappa.svg and "
+            f"kick_shape.svg"
+        )
     return 0
 
 
