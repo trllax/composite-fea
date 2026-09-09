@@ -90,6 +90,29 @@ def test_flex_tol_reweights_the_axes():
     )
 
 
+def test_require_bucket_is_a_hard_filter_before_scoring():
+    # flex 15 target: 'far_flex' at 6 N is the only mid design; 'near' at 12.2
+    # is a closer flex match but wrong bucket. Without the filter 'near' wins.
+    frame = pd.DataFrame(
+        [
+            ("near", "ok", 15.2, 0.80, None, "tip"),
+            ("mid_near", "ok", 15.6, 0.46, None, "mid"),
+            ("mid_far", "ok", 11.0, 0.45, None, "mid"),
+        ],
+        columns=["fingerprint", "status", "flex_n", "kick_s_frac", "warning",
+                 "kick_bucket"],
+    )
+    loose = rl.rank(frame, target_flex=15.0, target_frac=5 / 6, flex_tol=2.0)
+    assert loose.iloc[0]["fingerprint"] == "near"  # closest flex, wrong bucket
+
+    hard = rl.rank(
+        frame, target_flex=15.0, target_frac=0.5, flex_tol=2.0,
+        require_bucket="mid",
+    )
+    assert list(hard["fingerprint"]) == ["mid_near", "mid_far"]
+    assert "near" not in list(hard["fingerprint"])
+
+
 def test_drop_reasons_breaks_down_by_cause():
     reasons = rl.drop_reasons(_frame())
     assert reasons == {"errored": 1, "no_90_deg": 1, "kick_warning": 1}

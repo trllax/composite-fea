@@ -1,25 +1,32 @@
 {
-  "_comment": "Input for cases/fin_test_3/sweep_layups.py. A TaperDesign 'base' plus 'axes' whose Cartesian product is the grid. Each axis key is a top-level design field (core, skins, pad_order, core_center) or 'pads.<ZONE>'. PlySpec is [material, angle_deg]; thickness comes from the shop inventory. Symmetric by construction: core and each pad half-stack are mirrored about the mid-plane.",
+  "_comment": "Input for cases/fin_test_3/sweep_layups.py: a TaperDesign 'base' plus 'axes' whose Cartesian product is the grid. PlySpec is [material, angle_deg]; thickness comes from the shop inventory. Symmetric by construction (core + each pad half-stack mirrored about the mid-plane).",
+  "_geometry_note": "Long axis +y, clamp at the HEAL edge. HEAL (y>1.1) is INSIDE the fixture -- plies there do nothing; the design omits it. Free-span coverage of the tiering zones, measured from the clamp: QUARTER 0-15%, MID 0-39%, z_3_4ths 0-68%, TIP 84-100%. FULL is the whole blade.",
+  "_knobs": "core (on FULL) is the flex knob (~thickness^3, uniform). pads.MID / pads.z_3_4ths set how far out the stiff tier reaches -> where the blade folds (the kick point). QUARTER and TIP pads are fixed here; add them or core_center as further axes.",
   "base": {
     "through_zone": "FULL",
     "skins": [["hexcel_im7_twill_205", 0]],
     "core": [["hexcel_im2_uni_193", 0]],
     "core_center": null,
     "pads": {
-      "TIP": [["hexcel_im2_uni_193", 0]],
       "QUARTER": [["hexcel_im7_twill_205", 0]],
-      "HEAL": [["hexcel_im7_twill_205", 0]]
+      "TIP": [["hexcel_im7_twill_205", 0]]
     },
-    "pad_order": ["TIP", "MID", "QUARTER", "HEAL"]
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
   },
   "axes": {
     "core": [
       [["hexcel_im2_uni_193", 0]],
-      [["hexcel_im2_uni_193", 0], ["hexcel_himax_biax_100", 0]]
+      [["hexcel_im2_uni_193", 0], ["hexcel_himax_biax_100", 0]],
+      [["hexcel_im2_uni_193", 0], ["hexcel_im2_uni_193", 0]]
     ],
-    "pads.HEAL": [
+    "pads.MID": [
+      [],
       [["hexcel_im7_twill_205", 0]],
-      [["hexcel_im7_twill_205", 0], ["hexcel_im2_uni_193", 0]]
+      [["hexcel_im7_twill_205", 0], ["hexcel_himax_biax_100", 0]]
+    ],
+    "pads.z_3_4ths": [
+      [],
+      [["hexcel_himax_biax_100", 0]]
     ]
   }
 }

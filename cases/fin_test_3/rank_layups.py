@@ -69,8 +69,13 @@ def rank(
     target_flex: float,
     target_frac: float,
     flex_tol: float,
+    require_bucket: str | None = None,
 ) -> pd.DataFrame:
     """Filtered, distance-scored, ascending. Pure; no I/O.
+
+    ``require_bucket`` (heel/mid/tip) is a hard filter applied before scoring --
+    use it when the kick bucket is a requirement, not a preference, since the
+    distance metric alone lets a close flex match outrank a whole bucket.
 
     Empty frame in -> empty frame out (an all-error sweep writes a parquet with
     no ``flex_n`` column); the caller turns that into a clear exit.
@@ -85,6 +90,8 @@ def rank(
     keep = keep[keep["flex_n"].notna()]
     if "warning" in keep.columns:
         keep = keep[~_warned(keep["warning"])]
+    if require_bucket is not None and "kick_bucket" in keep.columns:
+        keep = keep[keep["kick_bucket"] == require_bucket]
     keep = keep.copy()
     keep["flex_dist"] = (keep["flex_n"] - target_flex) / flex_tol
     keep["kick_dist"] = keep["kick_s_frac"] - target_frac
@@ -145,6 +152,13 @@ def build_parser() -> argparse.ArgumentParser:
         "5/6); ranks by distance to that, not by bucket membership",
     )
     p.add_argument("--target-kick-frac", type=float, default=None)
+    p.add_argument(
+        "--require-bucket",
+        choices=sorted(BUCKET_FRAC),
+        default=None,
+        help="hard filter: drop designs not in this kick bucket before "
+        "scoring. Use when the bucket is a requirement, not a preference.",
+    )
     p.add_argument("--flex-tol", type=float, default=2.0)
     p.add_argument("--top", type=int, default=10, help="rows to label on the plot")
     p.add_argument(
@@ -164,12 +178,15 @@ def main(argv: list[str] | None = None) -> int:
         target_flex=args.target_flex,
         target_frac=target_frac,
         flex_tol=args.flex_tol,
+        require_bucket=args.require_bucket,
     )
     reasons = drop_reasons(df)
     n_dropped = sum(reasons.values())
     if n_dropped:
         detail = ", ".join(f"{k}={v}" for k, v in reasons.items() if v)
         print(f"dropped {n_dropped} of {len(df)} rows: {detail}")
+    if args.require_bucket:
+        print(f"kept only kick_bucket == {args.require_bucket!r}")
     if ranked.empty:
         raise SystemExit(
             "no rankable rows (all errored, warned, or short of 90 deg). "

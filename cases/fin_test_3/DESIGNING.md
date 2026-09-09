@@ -105,8 +105,33 @@ python cases/fin_test_3/rank_layups.py results/<run-id>/results.parquet \
 `--flex-tol` (default 2 N) setting the trade rate. Rows with a kick-point
 warning, an error, or no 90° are dropped and **counted** in the printout.
 Writes `ranked.csv` + a scatter SVG (flex vs kick fraction, target starred,
-top-N labelled). There is **no change-cost term yet** -- a later version will
-rank "move a zone boundary < change a ply count < swap a fabric".
+top-N labelled). `--require-bucket heel|mid|tip` is a **hard filter** -- drop
+designs not in that bucket before scoring -- for when the bucket is a
+requirement, not a preference (the distance metric alone lets a close flex
+match outrank a whole bucket). There is **no change-cost term yet** -- a later
+version will rank "move a zone boundary < change a ply count < swap a fabric".
+
+### Which zone a pad tiers -- FIN_TEST_3
+
+The kick point is where the stiff root region **steps down**, so it lands just
+outboard of the last padded zone. On `FIN_TEST_3.step`, measured from the clamp
+as a fraction of the 649 mm free span:
+
+| zone | covers free span | a pad here puts the kick near |
+| --- | --- | --- |
+| `HEAL` | inside the fixture (`fixed_end`) | nothing -- those plies are clamped |
+| `QUARTER` | 0 – 15 % | f ≈ 0.21 (**heel**) |
+| `MID` | 0 – 39 % | f ≈ 0.45 (**mid**) |
+| `z_3_4ths` | 0 – 68 % | further out; needs a thin `FULL` core to read **tip** |
+| `TIP` | 84 – 100 % | holds the last sixth straight (keeps the kick inboard) |
+| `FULL` | whole blade | the flex knob; does not move the kick |
+
+Measured on an 18-design sweep (`designs_example.json`): `MID` unpadded →
+**heel** at f ≈ 0.21 for every flex level; `MID` padded → **mid** at
+f ≈ 0.45 – 0.46, dead stable from 12 N to 56 N of flex; `MID` + `z_3_4ths`
+padded **with a thin (`[UD]`) `FULL` core** → **tip** at f ≈ 0.71. Flex and
+kick are close to separable once you pad the right zone: pick the bucket with
+the pad reach, then trim flex with the `FULL` core count.
 
 ### The knobs
 
@@ -117,14 +142,14 @@ independent effects:
   the open blade. To make the whole fin stiffer/softer, add or drop plies (or
   swap a fabric for a stiffer/softer one) **uniformly** across `FULL` / the
   through-going zones. A single `FULL` ply of ~0.2 mm is a large flex move.
-- **Kick point** is set by the **stiffness taper** — where the stack steps down
-  along the span. The blade bends where it is most compliant:
-  - thick, long inboard zones (`HEAL`, `QUARTER`) + thin open blade → kick
-    moves **outboard** (toward mid / tip).
-  - a stiff `TIP` pad (paired UD) holds the last ~15 % straight → kick moves
-    **inboard** off the tip.
-  - to move the kick **toward the heel**, shorten the inboard zones or thin
-    them so the blade starts bending sooner.
+- **Kick point** is set by the **stiffness taper** — how far out the padded
+  root region reaches (see the zone table above). The blade folds just outboard
+  of the last padded zone.
+  - pad out to `MID` → kick at mid; add `z_3_4ths` (light) over a thin `FULL`
+    core → kick at tip; pad only `QUARTER` → kick stays at the heel.
+  - a `TIP` pad holds the last sixth straight, so it pulls the kick **inboard**
+    off the tip.
+  - a pad on `HEAL` does nothing here — it is inside the fixture.
   - moving a **zone boundary** in the STEP is the cheapest kick move; changing
     a **ply count** in a zone is next; **swapping a fabric** (UD ↔ woven, or to
     one the shop does not stock) is the expensive one. (A future cost function
