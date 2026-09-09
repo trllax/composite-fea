@@ -152,3 +152,100 @@ def euler_load(*, ei: float, length: float) -> float:
     """Clamped-free buckling load ``pi^2 EI / (4 L^2)`` -- the ``delta/L -> 0``
     limit of :func:`axial_load`."""
     return float(np.pi**2 * ei / (4.0 * length**2))
+
+
+# --------------------------------------------------------------------------
+# Curvature along the span -- the reference for the kick-point metric.
+#
+# From the first integral ``(phi')^2 = (2W/EI)(cos phi - cos phi_L)``:
+#
+#     kappa(s) = phi'(s) = sqrt(2W/EI) * sqrt(cos phi - cos phi_L)
+#     s(phi)   = sqrt(EI/2W) * int_0^phi dpsi / sqrt(cos psi - cos phi_L)
+#
+# so ``kappa`` is largest at the clamp (``s = 0``, ``phi = 0``) and zero at the
+# free tip (``s = L``, ``phi = phi_L``). A uniform column therefore "kicks" at
+# the heel; a stiffness taper that thins the tip moves the peak outboard. Same
+# ``phi = phi_L - v^2`` substitution as :func:`_integrals` for the s-quadrature.
+#
+# ``k = sqrt(2W/EI) = I(phi_L)/L`` -- the ``EI`` inside ``W`` cancels, so the
+# *shape* of ``kappa(s)`` at a given tip angle does not depend on ``EI`` (only
+# ``W`` does). ``ei`` is still taken for signature parity with
+# :func:`axial_load_at_angle`; it does not change the result.
+# --------------------------------------------------------------------------
+
+
+def _wavenumber(phi_l: float, *, ei: float, length: float) -> float:
+    """``k = sqrt(2W/EI) = I(phi_l) / L`` in 1/mm, so ``kappa = k sqrt(cos..)``.
+
+    ``ei`` is accepted and ignored -- it cancels (see the section note above).
+    """
+    del ei
+    i, _ = _integrals(phi_l)
+    return i / length
+
+
+def curvature_root(phi_l: float, *, ei: float, length: float) -> float:
+    """Curvature at the clamp, ``kappa(0) = k sqrt(1 - cos phi_l)`` in 1/mm.
+
+    The maximum of :func:`curvature_profile`; the simplest closed-form target
+    for a kick-point check on a uniform column.
+    """
+    k = _wavenumber(phi_l, ei=ei, length=length)
+    return float(k * np.sqrt(1.0 - np.cos(phi_l)))
+
+
+def curvature_profile(
+    phi_l: float, *, ei: float, length: float, n: int = 200
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(s_mm[n], kappa_1pmm[n])`` from clamp (``s = 0``) to tip (``s = L``).
+
+    ``kappa`` is monotone decreasing: maximal at ``s = 0``, zero at ``s = L``.
+    """
+    if not _MIN_PHI_L <= phi_l <= _MAX_PHI_L:
+        raise ValueError(
+            f"phi_l must be in [{np.degrees(_MIN_PHI_L):g}, "
+            f"{np.degrees(_MAX_PHI_L):g}] deg; use euler_load() near phi_l = 0"
+        )
+    if n < 2:
+        raise ValueError(f"n must be >= 2, got {n}")
+    k = _wavenumber(phi_l, ei=ei, length=length)
+
+    # Fine grid in v = sqrt(phi_l - phi); phi = phi_l - v^2 runs the tip (v = 0)
+    # to the clamp (v = v_max). The s integrand 2v / sqrt(cos(phi_l - v^2) -
+    # cos phi_l) is bounded, tending to 2 / sqrt(sin phi_l) as v -> 0. The grid
+    # always over-resolves the requested n, so refining n really refines.
+    v_max = np.sqrt(phi_l)
+    v = np.linspace(0.0, v_max, max(4001, 2 * n + 1))
+    diff = np.cos(phi_l - v**2) - np.cos(phi_l)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        g = 2.0 * v / np.sqrt(diff)
+    g[0] = 2.0 / np.sqrt(np.sin(phi_l))
+    cum = np.concatenate(
+        [[0.0], np.cumsum(np.diff(v) * 0.5 * (g[:-1] + g[1:]))]
+    )
+    # cum(v) = int_phi^{phi_l} dpsi/sqrt(..) = I - F(phi), so s(phi) = F/k =
+    # (I - cum)/k. v = 0 -> s = L (tip); v = v_max -> s = 0 (clamp).
+    s_of_v = (cum[-1] - cum) / k
+    kappa_of_v = k * np.sqrt(np.clip(diff, 0.0, None))
+
+    # Reverse to clamp -> tip (s ascending), then decimate to n points.
+    s = s_of_v[::-1]
+    kappa = kappa_of_v[::-1]
+    idx = np.linspace(0, s.size - 1, n).round().astype(int)
+    return s[idx], kappa[idx]
+
+
+def rotation_median_s(phi_l: float, *, length: float) -> float:
+    """Arc length from the clamp to where the tangent angle reaches ``phi_l / 2``.
+
+    The station that splits the tip rotation in half -- the robustness
+    cross-check for the kick point. ``s = L * F(phi_l/2) / I``; the integrand is
+    singular only at ``phi_l`` so the half-angle integral is taken directly.
+    """
+    i, _ = _integrals(phi_l)
+    x, w = np.polynomial.legendre.leggauss(200)
+    half = 0.5 * phi_l
+    psi = 0.5 * half * (x + 1.0)
+    wts = 0.5 * half * w
+    f_half = float(np.sum(wts / np.sqrt(np.cos(psi) - np.cos(phi_l))))
+    return length * f_half / i

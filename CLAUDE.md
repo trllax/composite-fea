@@ -47,24 +47,32 @@ src/compfea/
   step_mesh.py    STEP import -> OCC imprint -> exact ACP-style zone masks
   layup.py        design vector -> *SHELL SECTION, COMPOSITE blocks
   deck.py         assemble a complete .inp (all strings; there is no template)
-  ubend.py        tip-U clamp path -> multi-step NLGEOM deck, angle <-> step
+  kick.py         solved tip-weight run -> flex (W at 90 deg) + kick point
+  ubend.py        LEGACY: tip-U clamp circular-arc path -> multi-step deck
   run.py          subprocess ccx, validate convergence, parse .dat
-  metrics.py      ELSE energy -> secant / tangent moment, linearity deviation
+  metrics.py      LEGACY: U-bend ELSE energy -> secant / tangent moment
   sweep.py        parameter grid -> process pool -> results.parquet
-  post.py         one solve dir -> F(theta) CSV + SVG
+  post.py         one solve dir -> F(theta) CSV + SVG (legacy U-bend metric)
   sweep_post.py   a sweep's results.parquet -> ranked CSV + comparison SVGs
   frd.py          streaming .frd reader; displacements only
-  shapes.py       planform, target-arc and deformed-shape plots
+  shapes.py       planform, target-arc and deformed-shape plots (legacy U-bend)
   stress.py       .dat ply stresses un-rotated into the material frame
   materials.py    materials CSV -> lamina cards; units declared, then checked
   plybook.py      ply-book CSV -> a Layup bound to the mesh's named zones
+  plybook_gen.py  TaperDesign (skins/core/pads over named zones) -> ply-book
+                  rows; symmetric by construction; the sweep's design vector
   abd.py          CLPT A/B/D per zone; the pre-solve cross-check against ACP
   build.py        compfea-build: STEP + ply book + materials -> deck + reports
 materials/        generic.csv (the shipped cards) + an empty ANSYS template
 cases/
+  fin_test_3/          the current fin method: STEP + shop plybook + tip-weight
+                       buckling bench; run_tipweight.py is the front door for one
+                       layup, sweep_layups.py + rank_layups.py for a grid,
+                       DESIGNING.md is the layup-to-target recipe
   fin_zoned/           the design front door on a real STEP
   smoke_cantilever/    32 elements, ~1 s, hand CLPT + closed-form elastica
-  fin_20n/             freediving fin, pinned to a physical measurement
+  fin_20n/             freediving fin, pinned to a physical measurement (legacy
+                       rotation-drive load case)
 results/               gitignored
 tests/
 ```
@@ -163,23 +171,83 @@ tests/
 ## The load case
 
 **Displacement control, always.** Prescribe the driven DOF at a reference node
-with `*BOUNDARY` and read the reaction out of a node set at the fixed end. Do
-not sweep load and solve for deflection — it will not survive the softening
-regime.
+with `*BOUNDARY`, read the reaction out of a node set at the fixed end, and let
+the load and the tip angle come out as results. Do not sweep load and solve for
+deflection — it will not survive the softening regime. `NLGEOM` is mandatory;
+deflections are large.
+
+### Fins: the tip-weight buckling-cantilever bench (`cases/fin_test_3`)
+
+This is the method for characterising a fin blade. It models the actual shop
+bench: the blade is clamped at the heel and held so its axis lies along a hung
+weight's line of action; the weight compresses it **past its Euler load** and it
+lies over until the tip tangent has turned some angle from the load line.
+
+- Drive a small tip **clip patch** (a few mid-chord nodes, where a string ties)
+  in **axial translation** under `*BOUNDARY`, toward the clamp. Leave every other
+  DOF on that patch free — free transverse translation is what makes this a
+  clamped-*free* column and not a clamped-pinned one (~8x stiffer).
+- Read `W`, the equivalent hung weight, as the **axial reaction** — the clip's
+  own `RF` along the drive axis (the fixture force, no body load), cross-checked
+  against the heel `RF`. No moment read-back, no `M = 2U/theta`, no moment arm.
+- `theta`, the tip tangent, is an **output**, read from two or more `*NODE PRINT`
+  U stations in the `.dat` (deck nodes — never the `.frd`, whose expanded solid
+  mesh fans one planform station into many and turns a slope fit into a chord
+  across curvature). So ccx's 90-degree prescribed-rotation wall never comes up.
+- The buckling bifurcation is broken by an imperfection: an unsymmetric layup
+  couples the axial drive into bending on its own; near Euler, add a
+  sub-millimetre first-mode bow (`run_tipweight.py --bow-tip-mm`).
+- **Flex** = `W` at `theta = 90 deg`, in newtons (~5 N supersoft, ~15–20 N
+  hard). **Kick point** = where the blade curves most: `compfea.kick` builds the
+  deformed centreline from a row of mid-chord U stations (`--kick-bands`),
+  takes the peak of a smoothed `|kappa(s)|`, and buckets it heel / mid / tip. It
+  warns when the peak is a broad plateau or bimodal — then "kick point" is
+  ill-posed for that blade. `flex_kick` also reports how the kick point migrates
+  up the span between a light load and 90 deg.
 
 ```
-*STEP, NLGEOM, INC=2000
+*STEP, NLGEOM, INC=40000
 *STATIC
-0.02, 1.0, 1.E-5, 0.05
+0.002, 1.0, 1.E-10, 0.05
 *BOUNDARY
-load_ref, 6, 6, 1.5708
+clip, 2, 2, -180.0          ** axial drive toward the clamp; dof = long axis
 *NODE PRINT, NSET=fixed_end, TOTALS=YES
 RF
+*NODE PRINT, NSET=clip, TOTALS=YES
+RF
+*NODE PRINT, NSET=clip
+U
+*NODE PRINT, NSET=tip_band
+U
+*EL PRINT, ELSET=blade, TOTALS=ONLY
+ELSE
 *END STEP
 ```
 
-`NLGEOM` is mandatory. Deflections are large. Per-part node set names and the
-driven DOF live in that part's case directory, not here.
+`deck.axial_drive_body` writes this (plus an optional `*DLOAD, GRAV` settle
+step for self-weight). The analytic gate is
+`cases/fin_test_3/compressed_elastica.py` — the clamped-free buckling elastica
+in elliptic-integral form, checked on a flat prismatic strip by
+`tests/test_compressed_elastica.py` and `tests/test_kick.py`. Per-part node set
+names and the drive DOF live in the case directory, not here.
+
+### Legacy / superseded
+
+Kept for the strip cases and for reading old results, **not** the path for new
+fin work:
+
+- `ubend.py` — the circular-arc tip-U clamp path. It prescribes the tip onto an
+  undeformed-length arc and reads `F = M / arm` with `M = 2U/theta`. It carries
+  **no compressive geometric-stiffness term**, so on a fin it read 2–3x too
+  soft; that was a boundary-condition error, not material or mesh. The
+  `M = 2U/theta` identity is also only a secant spring.
+- `metrics.py` — the secant/tangent moment and linearity-deviation machinery for
+  that `F(theta)`.
+- `post.py`, `shapes.py` — the `F(theta)` CSV/SVG and the circular-arc
+  target-arc poses that go with the U-bend path.
+- `cases/fin_20n` — its binding drives DOF 6 (rotation) to 1.5708 rad at
+  `tip_ref`. The case stays (it is the only hardware-pinned one) but new fin
+  characterisation uses the buckling bench above.
 
 ## Solver rules
 
@@ -245,11 +313,13 @@ written, and stream the file rather than reading it in. `frd.disp_at_step`
 raises if the step it is asked for never reached its end time, rather than
 handing back the last converged increment under the requested angle's name.
 
-Reaction **moments** need a different route: `*NODE PRINT` has no `RM` label,
-`*RIGID BODY` is rejected on shell nodes, and `*SECTION PRINT` silently returns
-zeros for `*SHELL SECTION, COMPOSITE` (it works for a plain shell section, which
-is what makes the zeros so easy to trust). Integrate ply stresses instead and
-cross-check against energy -- see `cases/cantilever_ansys`.
+Reaction **moments** need a different route on the legacy U-bend path:
+`*NODE PRINT` has no `RM` label, `*RIGID BODY` is rejected on shell nodes, and
+`*SECTION PRINT` silently returns zeros for `*SHELL SECTION, COMPOSITE` (it works
+for a plain shell section, which is what makes the zeros so easy to trust).
+Integrate ply stresses instead and cross-check against energy -- see
+`cases/cantilever_ansys`. The tip-weight bench sidesteps all of this: `W` is an
+axial `*NODE PRINT` `RF`, not a moment.
 
 ## Regression cases — do not weaken these
 
@@ -259,13 +329,19 @@ cross-check against energy -- see `cases/cantilever_ansys`.
   and -- through the tip draw-in of a reversed unsymmetric stack -- that the first
   ply line really is the -z ply. Its README records what each check is blind to;
   read that before assuming a green run covers something.
+- `tests/test_compressed_elastica.py` and `tests/test_kick.py` gate the fin
+  method: the clamped-free buckling reaction on a flat strip against the
+  elliptic-integral closed form, and the flex / kick-point reduction on top of
+  it. They must pass after any change to `deck.axial_drive_body`, `kick.py`, or
+  `cases/fin_test_3/compressed_elastica.py`. There is deliberately no skipif on
+  a missing `ccx`.
 - `cases/fin_20n` is pinned against a physical measurement and has a fixed
   tolerance.
 
-IMPORTANT: if a change breaks either case, fix the change. Do not widen the
-tolerance, do not update the expected value, do not mark it xfail. These two
-cases are the only thing standing between a refactor that scrambles ply
-ordering and fifty commits of plausible garbage.
+IMPORTANT: if a change breaks one of these cases, fix the change. Do not widen
+the tolerance, do not update the expected value, do not mark it xfail. These
+cases are the only thing standing between a refactor that scrambles ply ordering
+or the boundary condition and fifty commits of plausible garbage.
 
 ## Long-running work
 
@@ -275,6 +351,10 @@ times out well before these finish.
 `sweep.py` detaches itself (`setsid nohup`), writes `results/<run_id>/status.json`
 and `results/<run_id>/sweep.log`, and returns immediately with the run id.
 Poll it with short commands (`jq . status.json`, `tail -n 40 sweep.log`).
+
+`cases/fin_test_3/run_tipweight.py` is a single ~2-minute solve and does **not**
+self-detach — launch it with `setsid nohup ... > run.log 2>&1 &` yourself and
+poll the run dir (`W_vs_theta.csv`, `flex_kick.json`, `run.log`).
 
 Cache on a hash of the design vector so reruns are free.
 

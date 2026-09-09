@@ -6,6 +6,11 @@ Named shells: `FULL`, `3_4ths`, `MID`, `QUARTER`, `HEAL`, `TIP`.
 **Long axis is +y** (heal near +y, tip near −y). Chord is ±x; camber in z.
 Use `--long-axis y`. Mesh at 16 mm for quads (40 mm falls under the 98% floor).
 
+This file is the physics and the validation. **`DESIGNING.md` is the operator
+recipe** -- the loop you run to hit a target flex and kick point, by hand
+(`run_tipweight.py`) or over a grid (`sweep_layups.py` + `rank_layups.py`, fed a
+`TaperDesign` JSON like `designs_example.json`).
+
 ## Shop layup (initial)
 
 Fabrics: `twill_3k_198` skins + `hexcel_uni_231` UD only. No `3_4ths` / no `MID`
@@ -95,12 +100,42 @@ question. Record the blade mass with the bench number.
 Output: `W_vs_theta.csv` (with `tangent_ratio`), `W_vs_theta.svg`, `W`
 interpolated at `theta = 90 deg`, and a `dU/d(delta)` Castigliano cross-check.
 
+### Kick point
+
+`--kick-bands N` (default 21) adds a row of `N` mid-chord `*NODE PRINT` U
+stations along the span (`compfea.kick.span_band_nsets`, clamp/tip/clip nodes
+excluded). After the solve, `kick.flex_kick` builds the deformed centreline from
+those, takes `kappa(s)` as the rate of change of the local material tangent
+angle with developed span, and reports the arc-length location of the peak of a
+lightly smoothed `|kappa(s)|` -- bucketed **heel** (`< 1/3`) / **mid** /
+**tip** (`> 2/3`) -- at the increment where the canonical clip->`tip_band`
+`theta = 90 deg`, and again at `~15 deg` so migration with load is visible. A
+`rotation median` station (where the tip rotation is half done) is reported
+alongside as context, not an agreement check. It **warns** when the peak is a
+broad plateau or two comparable maxima far apart -- then "kick point" is
+ill-posed for that blade. Outputs are `flex_kick.json`, `kick_kappa.svg`
+(`|kappa|` vs span) and `kick_shape.svg` (the deformed mid-chord centreline in
+side view, coloured by `|kappa|`, kick point ringed at both load states).
+
+The gate is `curvature_profile` / `rotation_median_s` in `compressed_elastica.py`
+plus `tests/test_kick.py`: a uniform clamped-free column's curvature is maximal
+at the clamp, so its kick point is the **heel**; a synthetic hinge at `0.5 L`
+reads **mid**, at `0.78 L` reads **tip**. The metric is band-count converged to
+within one bucket from ~11 to ~41 bands on the real fin.
+
+First run, shop plybook + 41 bands: `flex = W(90 deg) = 9.00 N`, `kick = MID`
+at `s ~ 298 mm` (`f ~ 0.46`), no warning, and the kick point barely moves
+(`~2 mm`) between `theta = 15 deg` and `90 deg`. The thick heel and the tip UD
+pads push the peak curvature into the open blade, just inboard of mid-span --
+which is the "high kick" the shop layup was aiming for.
+
 ### The analytic gate
 
 `compressed_elastica.py` is the closed form (elliptic integrals, pure numpy,
 shares no module with `compfea`). `tests/test_compressed_elastica.py` drives a
 flat prismatic `[0/90]s` strip to the shortening the closed form predicts for a
 target tip angle and checks the reaction is `W(phi_L)`, at 45 / 65 / 85 deg.
+`tests/test_kick.py` reuses that strip for the flex + kick-point reduction.
 
 The FE strip carries a deliberate `CircularCamber` bow of radius `1000 L` (tip
 offset ~L/2000). A bowed column is genuinely a little soft: the gate lands
@@ -120,7 +155,7 @@ record the fin serial, the layup, the fixture grip length, the blade mass, and a
 ```sh
 # real solve (~2 min) -- launch detached and poll the run dir
 python cases/fin_test_3/run_tipweight.py --uy-frac 0.60 --bow-tip-mm 0.5 \
-       --bench-n 13.345 --bench-deg 110
+       --bench-n 13.345 --bench-deg 110 --kick-bands 41
 ```
 
 First run, shop plybook + `from_shop.csv` IM cards: the clip fixture force `W`
