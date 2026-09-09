@@ -5,7 +5,8 @@ Lamina cards and shop stock for `compfea-build` / ply books.
 | file | role |
 | --- | --- |
 | `generic.csv` | Textbook UD + derived woven cards already in the repo |
-| `ansys_composites.csv` | Paste ANSYS Engineering Data rows (`# units: stress=Pa density=kg/m3`) |
+| `ematerials_all.xml` | Raw ANSYS Workbench Engineering Data offload; source for `ansys_composites.csv` |
+| `ansys_composites.csv` | The ANSYS Epoxy Carbon library flattened to lamina cards (`# units: stress=Pa density=kg/m3`), plus two `im7_*_276` IM-class rows adapted from it. Paste more ANSYS rows here. |
 | `shop_inventory.csv` | What you actually stock: product, architecture, tow, gsm and/or oz/yd², thickness, moduli |
 
 ## Units
