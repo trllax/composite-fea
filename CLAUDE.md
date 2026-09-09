@@ -63,7 +63,9 @@ src/compfea/
                   rows; symmetric by construction; the sweep's design vector
   abd.py          CLPT A/B/D per zone; the pre-solve cross-check against ACP
   build.py        compfea-build: STEP + ply book + materials -> deck + reports
-materials/        generic.csv (the shipped cards) + an empty ANSYS template
+materials/        generic.csv (the shipped cards), the ANSYS Epoxy Carbon
+                  library (ansys_composites.csv + its ematerials_all.xml source),
+                  and shop_inventory.csv
 cases/
   fin_test_3/          the current fin method: STEP + shop plybook + tip-weight
                        buckling bench; run_tipweight.py is the front door for one
