@@ -1,0 +1,30 @@
+{
+  "_comment": "exp/nextgen-fin edge case: FULL +-45 SKINS from hexcel_himax_biax_100 @ 45 (0.12 mm cured, half the twill ply) over a UD spanwise core. Same idea as designs_nextgen_45skin_nobiax.json but the thinner +-45 shell leaves more of the flex budget for UD and gives a lighter blade at the same stiffness. WITH BIAX (a purchase).",
+  "_targets": "flex W(90) ~13.5 N (baseline 15.52 - 2), kick MID f~0.46, k_twist > 16249 N.mm/rad at a matched theta_at_probe (baseline 118.3 deg).",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["hexcel_himax_biax_100", 45]],
+    "core": [["hexcel_uni_231", 0]],
+    "core_center": null,
+    "pads": {
+      "QUARTER": [["hexcel_uni_231", 0]],
+      "TIP": [["hexcel_himax_biax_100", 45]]
+    },
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
+  },
+  "axes": {
+    "core": [
+      [["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0], ["hexcel_uni_231", 0]]
+    ],
+    "core_center": [
+      null,
+      ["hexcel_uni_231", 0]
+    ],
+    "pads.MID": [
+      [],
+      [["hexcel_uni_231", 0]]
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+# DERIVED from plybook_shop.csv: every thickness_mm x 1.2 (as-laid cured,
+# measured on the built prototype 2026-09-10). Baseline for the exp/nextgen-fin
+# study's flex target (= this layup's re-solved W(90) - 2 N). The original
+# plybook_shop.csv and its README numbers are unchanged for provenance.
+# FIN_TEST_3 layup from last-three shop fabrics only:
+#   hexcel_im7_twill_205 (twill), hexcel_im2_uni_193 (UD), hexcel_himax_biax_100 (biax)
+# Sequence (ply 1 = -z showing face), as specified:
+#   twill-FULL, UD-FULL, UD-TIP, biax-FULL, UD-MID, twill-MID, biax-MID,
+#   twill-QUARTER, biax-QUARTER, twill-HEAL, biax-HEAL, twill-FULL
+# Span +y. Thicknesses = inventory discrete. Biax angle_deg=0 => fibres ±45 to span.
+# Note: this book is NOT mid-plane symmetric (B may be nonzero) — matches the listed order.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,hexcel_im7_twill_205,0,0.246,woven
+2,FULL,hexcel_im2_uni_193,0,0.2316,ud
+3,TIP,hexcel_im2_uni_193,0,0.2316,ud
+4,FULL,hexcel_himax_biax_100,0,0.12,woven
+5,MID,hexcel_im2_uni_193,0,0.2316,ud
+6,MID,hexcel_im7_twill_205,0,0.246,woven
+7,MID,hexcel_himax_biax_100,0,0.12,woven
+8,QUARTER,hexcel_im7_twill_205,0,0.246,woven
+9,QUARTER,hexcel_himax_biax_100,0,0.12,woven
+10,HEAL,hexcel_im7_twill_205,0,0.246,woven
+11,HEAL,hexcel_himax_biax_100,0,0.12,woven
+12,FULL,hexcel_im7_twill_205,0,0.246,woven

@@ -1,0 +1,10 @@
+# AX3 open blade 2 UD; MID step is a single tw@45 (lighter than UD)
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2376,woven
+2,FULL,hexcel_uni_231,0.000000,0.2772,ud
+3,FULL,hexcel_uni_231,0.000000,0.2772,ud
+4,MID,twill_3k_198,45.000000,0.2376,woven
+5,QUARTER,hexcel_uni_231,0.000000,0.2772,ud
+6,QUARTER,twill_3k_198,45.000000,0.2376,woven
+7,TIP,twill_3k_198,45.000000,0.2376,woven
+8,FULL,twill_3k_198,45.000000,0.2376,woven

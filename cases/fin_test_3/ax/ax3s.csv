@@ -1,0 +1,9 @@
+# AX3S = ax3 minus the QUARTER UD ply -> ~1 N softer
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2376,woven
+2,FULL,hexcel_uni_231,0.000000,0.2772,ud
+3,FULL,hexcel_uni_231,0.000000,0.2772,ud
+4,MID,twill_3k_198,45.000000,0.2376,woven
+5,QUARTER,twill_3k_198,45.000000,0.2376,woven
+6,TIP,twill_3k_198,45.000000,0.2376,woven
+7,FULL,twill_3k_198,45.000000,0.2376,woven

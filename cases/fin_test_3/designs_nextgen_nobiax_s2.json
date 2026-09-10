@@ -1,0 +1,30 @@
+{
+  "_comment": "exp/nextgen-fin Grid A sweep 2. s1 showed the MID pad is a huge flex lever (+~10 N per UD pair) so no s1 design hit ~13.5 N with a MID kick. s2 thins the through-section hard (skins-only up to skins + 1 UD core pair + 1 mid UD) and uses the lightest MID pads twill can give (twill@45 or twill@0 pair). NO BIAX -- torsional +-45 from twill_3k_198 @ 45 only.",
+  "_targets": "flex W(90) ~13.5 N (baseline 15.52 - 2), kick MID f~0.46, k_twist > 16249 N.mm/rad at a matched theta_at_probe (baseline 118.3 deg).",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["twill_3k_198", 0]],
+    "core": [],
+    "core_center": null,
+    "pads": {
+      "QUARTER": [["twill_3k_198", 0]],
+      "TIP": [["twill_3k_198", 0]]
+    },
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
+  },
+  "axes": {
+    "core": [
+      [],
+      [["hexcel_uni_231", 0]]
+    ],
+    "core_center": [
+      null,
+      ["hexcel_uni_231", 0]
+    ],
+    "pads.MID": [
+      [["twill_3k_198", 45]],
+      [["twill_3k_198", 0]],
+      [["twill_3k_198", 45], ["hexcel_uni_231", 0]]
+    ]
+  }
+}

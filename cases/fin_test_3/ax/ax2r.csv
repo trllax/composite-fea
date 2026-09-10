@@ -1,0 +1,12 @@
+# AX2R = ax2 reordered so the +-45 twill plies distribute through-thickness
+#        (QUARTER+MID root stack -> [45/0/0/45/0/0/45], mid-plane a +-45) to cut
+#        the extension-bending B coupling / mould warp. Same materials & counts as ax2.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2376,woven
+2,QUARTER,hexcel_uni_231,0.000000,0.2772,ud
+3,MID,hexcel_uni_231,0.000000,0.2772,ud
+4,QUARTER,twill_3k_198,45.000000,0.2376,woven
+5,FULL,hexcel_uni_231,0.000000,0.2772,ud
+6,FULL,hexcel_uni_231,0.000000,0.2772,ud
+7,TIP,twill_3k_198,45.000000,0.2376,woven
+8,FULL,twill_3k_198,45.000000,0.2376,woven

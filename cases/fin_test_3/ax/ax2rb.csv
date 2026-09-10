@@ -1,0 +1,15 @@
+# AX2RB = biax analog of ax2r: +-45 skins/pads from hexcel_himax_biax_100 (a
+#         would-be purchase) instead of twill_3k_198 @ 45. The biax ply is 0.12 mm
+#         vs the twill's 0.238, so one extra FULL UD ply is added to hold flex.
+#         Built to test whether buying biax beats the no-biax ax2r. Interleaved
+#         for B ~ 0 in the root.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,hexcel_himax_biax_100,45.000000,0.12,woven
+2,QUARTER,hexcel_uni_231,0.000000,0.2772,ud
+3,MID,hexcel_uni_231,0.000000,0.2772,ud
+4,QUARTER,hexcel_himax_biax_100,45.000000,0.12,woven
+5,FULL,hexcel_uni_231,0.000000,0.2772,ud
+6,FULL,hexcel_uni_231,0.000000,0.2772,ud
+7,FULL,hexcel_uni_231,0.000000,0.2772,ud
+8,TIP,hexcel_himax_biax_100,45.000000,0.12,woven
+9,FULL,hexcel_himax_biax_100,45.000000,0.12,woven
