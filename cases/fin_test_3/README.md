@@ -129,6 +129,52 @@ at `s ~ 298 mm` (`f ~ 0.46`), no warning, and the kick point barely moves
 pads push the peak curvature into the open blade, just inboard of mid-span --
 which is the "high kick" the shop layup was aiming for.
 
+### Tip twist stiffness (`--twist-probe`)
+
+`--twist-probe` appends **two** `*STATIC` steps to the same solve: from the
+buckled state it applies a force couple to the tip chord edges --
+`+F` (`--twist-cload-n`, default 3 N) on every `twist_le` node, `-F` on every
+`twist_te` node (`twist.tip_chord_nsets` splits the tip edge minus `clip` into
+equal-size chord-extreme halves) -- then `-F` / `+F` (second step `OP=NEW`). A
+**`*CLOAD`, not a prescribed rotation**: an unsymmetric layup has *rolled* the
+tip edge by the time it is buckled over, so those nodes sit at unknown
+non-uniform axial positions and a prescribed total displacement there cannot be
+formed without first solving -- a force is incremental.
+
+`k_twist = couple / twist_angle` in `N.mm/rad`. Everything is on the *deformed*
+chord: `s` is the tip chord width between the two edge groups at the drive-step
+baseline (so a rolled section is not credited a lever arm it foreshortened away);
+`couple = |F| * n_per_side * s`; `twist_angle` is the half-swing of
+`((uy_le - uy_te) at +F) - ((uy_le - uy_te) at -F)` divided by `s` (the swing
+removes the roll's contribution to the angle). It is a moment about **global z**.
+
+`k_twist` is **comparative only** -- no closed form, absolute value not
+meaningful; larger is stiffer, and it rewards biax / +/-45 / transverse plies
+(`D66`, `A66`). The z-couple is a pure twist only near `theta = 90 deg`; away
+from there it also drives lateral bending, so `k_twist` is comparable **only
+across layups that reach a similar `theta_at_probe_deg`** (recorded in
+`twist.json` -- check its spread before trusting a `--twist-tiebreak`).
+`--twist-probe` does **not** change `--uy-frac` (the sweep still needs 0.60 to
+bracket 90 deg or `flex_n` is null); the probe is read wherever the drive step
+ends.
+
+`twist_stiffness` **warns** when: `theta_at_probe` is outside 45..135 deg (the
+number is not usable); the twist angle is below 0.03 deg (`k_twist` comes back
+**`None`** -- raise `--twist-cload-n`) or above 3 deg (lower it); the le/te edge
+motion is very asymmetric (strong bend-twist coupling / roll -- the comparison
+is soft); or the heel RF swing is large. A twist step that will not converge =
+the section has no positive torsional stiffness there; that propagates as
+`NotConverged`, no `twist.json` is written, and it is not papered over.
+
+The solve is now **3 steps** (4 with `--gravity`); `final_time` and the twist
+step times move accordingly. `collect()` bounds `W_vs_theta.csv` and the kick
+`theta->time` map to the drive step, so flex and kick are unaffected. Output is
+`twist.json`. Gate: `tests/test_twist.py` -- deck cards, the chord split, a
+synthetic-`.dat` `k_twist`, and end to end that a `[+/-45]s` strip is more than
+1.5x the tip twist stiffness of a `[0]4` strip of equal thickness (observed
+ratio ~2 -- the metric dilutes the ~5-10x laminate `D66` ratio), repeatable
+under `n_span` + `n_chord` refinement.
+
 ### The analytic gate
 
 `compressed_elastica.py` is the closed form (elliptic integrals, pure numpy,

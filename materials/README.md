@@ -25,8 +25,8 @@ and keep the `# units:` line honest.
 Design parameters are discrete:
 
 - **zones / coverage** and **ply count / angle** in the ply book
-- **thickness** only from `shop_inventory.thickness_mm` (or
-  `areal_weight_gsm / 1000`)
+- **thickness** only from `shop_inventory.thickness_mm` (or, when blank,
+  `areal_weight_gsm / 1000 * CURED_PLY_FACTOR`)
 - **material** name must match a materials library `name`
 
 Outputs that matter for the fin (F_90 and kick locus) are post metrics,
@@ -42,9 +42,15 @@ not columns here.
 - **Areal weight**: fill `areal_weight_gsm` and/or `areal_weight_oz_yd2`
   (oz per square yard). Conversion used by a loader:
   `gsm = oz_yd2 * 33.9057`.
-- **Thickness**: `thickness_mm = areal_weight_gsm / 1000` (100 gsm → 0.1 mm).
-  Prefer writing the thickness you actually laminate to when it differs from
-  the rule of thumb (mat binder, residual resin, measured cured ply).
+- **Thickness**: the as-laid **cured** ply thickness. When `thickness_mm` is
+  blank the loader derives `areal_weight_gsm / 1000 * CURED_PLY_FACTOR`
+  (`shop_inventory.CURED_PLY_FACTOR`, currently **1.1** — the built FIN_TEST_3
+  prototype measured ~1.2× the dry `gsm/1000` rule on 2026-09-10; 1.1 is the
+  adopted compromise, part real ply loft and part resin). The card moduli and
+  density are NOT scaled with it, so since flex ~ `E·t³` this factor moves
+  stiffness directly — keep it small. An explicit `thickness_mm` is trusted
+  as-is (no factor); the shipped rows carry the ×1.1 cured value. Prefer a
+  per-fabric micrometer + Vf re-derivation over the uniform factor.
 
 ### Architecture → ply angle
 

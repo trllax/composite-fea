@@ -2,10 +2,15 @@
 # Shop stock. Lamina cards matched from materials/im_lamina.csv where known.
 # fibre_e_msi / fibre_xt_ksi are fibre-only and never become e1.
 # architecture: ud | 0_90 | biax
+# thickness_mm is the as-laid CURED ply thickness = gsm/1000 * 1.1. The built
+# FIN_TEST_3 prototype laminate measured ~1.2x the dry gsm/1000 rule on
+# 2026-09-10; 1.1 is the adopted compromise (part ply loft, part resin) and
+# the card moduli/density are NOT scaled with it. Pending per-fabric data. See
+# shop_inventory.CURED_PLY_FACTOR.
 name,product,architecture,tow,areal_weight_gsm,areal_weight_oz_yd2,thickness_mm,width_in,fibre_e_msi,fibre_xt_ksi,e1,e2,e3,nu12,nu13,nu23,g12,g13,g23,density,qty_m2,source
-hexcel_uni_379,Hexcel UNI,ud,,379,11,0.379,24,,,121,8.6,8.6,0.27,0.27,0.4,4.7,4.7,3.1,1.49,,ansys_epoxy_carbon_ud_230 (SM library; roll fibre grade unspecified)
-hexcel_uni_231,Hexcel UNI,ud,,231,6.8,0.231,24,,,121,8.6,8.6,0.27,0.27,0.4,4.7,4.7,3.1,1.49,,ansys_epoxy_carbon_ud_230 (SM library; roll fibre grade unspecified)
-twill_3k_198,3K carbon twill,0_90,3k,198,6,0.198,,33.5,653,59.16,59.16,7.5,0.04,0.3,0.3,3.3,2.7,2.7,1.451,,t700_woven_sm / ANSYS woven wet; fibre_* AS4C-class labels only
-hexcel_im2_uni_193,Hexcel UNI IM2,ud,12k,193,5.7,0.193,,,,153,6.813,6.813,0.32,0.32,0.45,4.087,4.087,3.0,1.57,,im2_ud from materials/im_lamina.csv (HexPly M47/IM2-C E1 + Epocast E2/G12)
-hexcel_himax_biax_100,Hexcel HiMax biax ±45,biax,12k,100,2.95,0.1,,,,59.16,59.16,7.5,0.04,0.3,0.3,3.3,2.7,2.7,1.451,,t700_woven_sm (T700 fibre → SM woven wet card; biax stand-in)
-hexcel_im7_twill_205,Hexcel 2x2 twill IM7,0_90,6k,205,6,0.205,,,,86,86,7.5,0.04,0.3,0.3,4.0,3.0,3.0,1.56,,im7_woven from materials/im_lamina.csv (HexPly 8552 IM7 fabric ~85-86 GPa)
+hexcel_uni_379,Hexcel UNI,ud,,379,11,0.4169,24,43,,153,6.813,6.813,0.32,0.32,0.45,4.087,4.087,3.0,1.57,,Hexcel IM UD roll (IM446-grade fibre ~43 Msi); lamina constants reused from hexcel_im2_uni_193 (HexPly M47/IM2-C E1 + Epocast E2/G12) pending a datasheet
+hexcel_uni_231,Hexcel UNI,ud,,231,6.8,0.2541,24,43,,153,6.813,6.813,0.32,0.32,0.45,4.087,4.087,3.0,1.57,,Hexcel IM UD roll (IM446-grade fibre ~43 Msi); lamina constants reused from hexcel_im2_uni_193 (HexPly M47/IM2-C E1 + Epocast E2/G12) pending a datasheet
+twill_3k_198,3K carbon twill,0_90,3k,198,6,0.2178,,33.5,653,59.16,59.16,7.5,0.04,0.3,0.3,3.3,2.7,2.7,1.451,,t700_woven_sm / ANSYS woven wet; fibre_* AS4C-class labels only
+hexcel_im2_uni_193,Hexcel UNI IM2,ud,12k,193,5.7,0.2123,,,,153,6.813,6.813,0.32,0.32,0.45,4.087,4.087,3.0,1.57,,im2_ud from materials/im_lamina.csv (HexPly M47/IM2-C E1 + Epocast E2/G12)
+hexcel_himax_biax_100,Hexcel HiMax biax ±45,biax,12k,100,2.95,0.11,,,,59.16,59.16,7.5,0.04,0.3,0.3,3.3,2.7,2.7,1.451,,t700_woven_sm (T700 fibre → SM woven wet card; biax stand-in)
+hexcel_im7_twill_205,Hexcel 2x2 twill IM7,0_90,6k,205,6,0.2255,,,,86,86,7.5,0.04,0.3,0.3,4.0,3.0,3.0,1.56,,im7_woven from materials/im_lamina.csv (HexPly 8552 IM7 fabric ~85-86 GPa)

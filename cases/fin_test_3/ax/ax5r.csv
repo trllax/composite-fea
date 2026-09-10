@@ -1,0 +1,11 @@
+# AX5R = ax5 interleaved. Residual B from the tw0/UD 0deg-material mix; see ax3r for the B~0 alternative at a similar flex.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2178,woven
+2,QUARTER,hexcel_uni_231,0.000000,0.2541,ud
+3,MID,twill_3k_198,45.000000,0.2178,woven
+4,FULL,twill_3k_198,0.000000,0.2178,woven
+5,MID,hexcel_uni_231,0.000000,0.2541,ud
+6,FULL,hexcel_uni_231,0.000000,0.2541,ud
+7,QUARTER,twill_3k_198,45.000000,0.2178,woven
+8,TIP,twill_3k_198,45.000000,0.2178,woven
+9,FULL,twill_3k_198,45.000000,0.2178,woven

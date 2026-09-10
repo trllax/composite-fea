@@ -1,0 +1,10 @@
+# AX1B biax +-45 skins; open blade bx45/UD/tw0/bx45; MID 1 UD
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,hexcel_himax_biax_100,45.000000,0.1100,woven
+2,FULL,hexcel_uni_231,0.000000,0.2541,ud
+3,FULL,twill_3k_198,0.000000,0.2178,woven
+4,MID,hexcel_uni_231,0.000000,0.2541,ud
+5,QUARTER,hexcel_uni_231,0.000000,0.2541,ud
+6,QUARTER,hexcel_himax_biax_100,45.000000,0.1100,woven
+7,TIP,hexcel_himax_biax_100,45.000000,0.1100,woven
+8,FULL,hexcel_himax_biax_100,45.000000,0.1100,woven

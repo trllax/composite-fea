@@ -48,6 +48,7 @@ src/compfea/
   layup.py        design vector -> *SHELL SECTION, COMPOSITE blocks
   deck.py         assemble a complete .inp (all strings; there is no template)
   kick.py         solved tip-weight run -> flex (W at 90 deg) + kick point
+  twist.py        chordwise tip-edge nsets + k_twist from a +/-F couple swing
   ubend.py        LEGACY: tip-U clamp circular-arc path -> multi-step deck
   run.py          subprocess ccx, validate convergence, parse .dat
   metrics.py      LEGACY: U-bend ELSE energy -> secant / tangent moment
@@ -233,6 +234,28 @@ in elliptic-integral form, checked on a flat prismatic strip by
 `tests/test_compressed_elastica.py` and `tests/test_kick.py`. Per-part node set
 names and the drive DOF live in the case directory, not here.
 
+- **Tip twist stiffness** (`run_tipweight.py --twist-probe`, `compfea.twist`,
+  `deck.twist_couple_body`) is a second/third `*STATIC` step on the buckled
+  state: a `+F`/`-F` **force couple** (`*CLOAD`, second step `OP=NEW`) on the
+  chord-split halves of the tip edge. A *force*, not a prescribed rotation: an
+  unsymmetric layup has rolled the tip edge by the time it is 90 deg over, so its
+  nodes sit at unknown axial positions and a prescribed total `*BOUNDARY`
+  displacement there cannot be formed without first solving. `k_twist = couple /
+  twist_angle`, all on the **deformed** chord width `s`: `couple = |F|·n·s`,
+  `twist_angle` the half-swing of the `twist_le`/`twist_te` `uy` difference over
+  `s`. Read from `*NODE PRINT` `U` — never `RM`. A moment about **global z**,
+  which is the twist axis only near `theta = 90 deg` — so `k_twist` is
+  **comparative only** *and only across layups reaching a similar
+  `theta_at_probe`* (recorded). `--twist-probe` does **not** change `--uy-frac`
+  (the sweep needs 0.60 to bracket 90 deg or `flex_n` is null); the probe reads
+  wherever the drive ends. `k_twist_nmm_per_rad` is `None` when the swing is
+  below ~0.03 deg; `twist_stiffness` warns on that, on θ outside 45..135, on a
+  lopsided le/te swing, and on a large heel RF swing. `rank_layups
+  --twist-tiebreak` re-orders same-`dist`-bin rows by `k_twist` but skips warned
+  / `None` rows. Gated by `tests/test_twist.py` (do not weaken). `collect()`
+  bounds `W_vs_theta.csv` and the kick map to the drive step, so flex/kick are
+  untouched when the flag is off.
+
 ### Legacy / superseded
 
 Kept for the strip cases and for reading old results, **not** the path for new
@@ -356,7 +379,8 @@ Poll it with short commands (`jq . status.json`, `tail -n 40 sweep.log`).
 
 `cases/fin_test_3/run_tipweight.py` is a single ~2-minute solve and does **not**
 self-detach — launch it with `setsid nohup ... > run.log 2>&1 &` yourself and
-poll the run dir (`W_vs_theta.csv`, `flex_kick.json`, `run.log`).
+poll the run dir (`W_vs_theta.csv`, `flex_kick.json`, `twist.json` with
+`--twist-probe`, `run.log`).
 
 Cache on a hash of the design vector so reruns are free.
 

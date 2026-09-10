@@ -1,0 +1,9 @@
+# AX1S = ax1 minus the QUARTER UD ply (root stiffener) -> ~1 N softer, MID kick unmoved
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2178,woven
+2,FULL,hexcel_uni_231,0.000000,0.2541,ud
+3,FULL,twill_3k_198,0.000000,0.2178,woven
+4,MID,hexcel_uni_231,0.000000,0.2541,ud
+5,QUARTER,twill_3k_198,45.000000,0.2178,woven
+6,TIP,twill_3k_198,45.000000,0.2178,woven
+7,FULL,twill_3k_198,45.000000,0.2178,woven

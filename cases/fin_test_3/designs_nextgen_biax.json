@@ -1,0 +1,31 @@
+{
+  "_comment": "exp/nextgen-fin Grid B -- WITH BIAX. Same skeleton as designs_nextgen_nobiax.json, but the torsional +-45 layers are hexcel_himax_biax_100 @ 45 (a would-be purchase). NOTE: in materials/from_shop.csv the biax card is a stand-in byte-identical to twill_3k_198 -- so vs Grid A this only changes the +-45 ply thickness (0.12 vs 0.2376 mm cured), i.e. finer flex/kick resolution, not fibre stiffness. See NEXTGEN.md.",
+  "_geometry_note": "FIN_TEST_3.step, long axis +y, clamp at HEAL. QUARTER 0-15%, MID 0-39%, z_3_4ths 0-68%, TIP 84-100%. FULL whole blade. HEAL inside the fixture -- omitted.",
+  "_knobs": "core = flex knob. pads.MID = kick knob. A [biax@45] ply in the core is the twist knob. QUARTER and TIP pads fixed.",
+  "_materials": "hexcel_uni_231 is now an IM UD card (E1=153 GPa, IM446-grade ~43 Msi fibre, constants reused from hexcel_im2_uni_193). twill_3k_198 and the hexcel_himax_biax_100 stand-in unchanged (E1=59 GPa woven).",
+  "_targets": "baseline = plybook_shop_measured re-solve 2026-09-10: flex W(90)=15.52 N, kick MID f=0.46, k_twist=16249 N.mm/rad at theta_at_probe=118.3 deg. TARGET: flex ~13.5 N (baseline-2), kick MID, k_twist>16249 at a matched theta.",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["twill_3k_198", 0]],
+    "core": [["hexcel_uni_231", 0]],
+    "core_center": null,
+    "pads": {
+      "QUARTER": [["hexcel_uni_231", 0]],
+      "TIP": [["twill_3k_198", 0]]
+    },
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
+  },
+  "axes": {
+    "core": [
+      [["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0]],
+      [["hexcel_himax_biax_100", 45], ["hexcel_uni_231", 0]],
+      [["hexcel_himax_biax_100", 45], ["hexcel_uni_231", 0], ["hexcel_uni_231", 0]]
+    ],
+    "pads.MID": [
+      [],
+      [["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0]]
+    ]
+  }
+}

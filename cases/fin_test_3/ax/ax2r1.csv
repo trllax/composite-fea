@@ -1,0 +1,13 @@
+# AX2R1 = ax2r with a SINGLE UD core ply (not the mirrored pair) -> an alternative
+#         super-soft. +-45 twill skins, one UD spanwise ply, single-ply +-45 MID /
+#         QUARTER steps. Open blade [45/0/45], MID region [45/0/0/45], QUARTER
+#         region [45/0/45/0/45] all B=0; only the small QUARTER-cap-MID root carries
+#         a tiny residual (3 tw45 + 3 UD, no exact palindrome).
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2178,woven
+2,QUARTER,hexcel_uni_231,0.000000,0.2541,ud
+3,MID,hexcel_uni_231,0.000000,0.2541,ud
+4,QUARTER,twill_3k_198,45.000000,0.2178,woven
+5,FULL,hexcel_uni_231,0.000000,0.2541,ud
+6,TIP,twill_3k_198,45.000000,0.2178,woven
+7,FULL,twill_3k_198,45.000000,0.2178,woven

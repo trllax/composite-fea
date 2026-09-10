@@ -1,0 +1,22 @@
+# DERIVED from plybook_shop.csv: every thickness_mm x 1.1 (as-laid cured;
+# prototype measured ~1.2x gsm/1000 2026-09-10, 1.1 adopted as the compromise).
+# Baseline for the exp/nextgen-fin flex target (= this layup's re-solved W(90) - 2 N).
+# The original plybook_shop.csv and its README numbers are unchanged for provenance.
+# FIN_TEST_3 layup, fabrics: hexcel_im7_twill_205, hexcel_im2_uni_193, hexcel_himax_biax_100.
+# Ply 1 = -z showing face. The biax plies are angle_deg=0 and hexcel_himax_biax_100 is a
+# stand-in card (E1=E2, == twill_3k_198), so they model as 0/90 -- NOT +-45 -- and add ~no
+# torsion; this baseline's k_twist is measured on that basis.
+# NOT mid-plane symmetric (B may be nonzero) -- matches the listed order.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,hexcel_im7_twill_205,0,0.2255,woven
+2,FULL,hexcel_im2_uni_193,0,0.2123,ud
+3,TIP,hexcel_im2_uni_193,0,0.2123,ud
+4,FULL,hexcel_himax_biax_100,0,0.11,woven
+5,MID,hexcel_im2_uni_193,0,0.2123,ud
+6,MID,hexcel_im7_twill_205,0,0.2255,woven
+7,MID,hexcel_himax_biax_100,0,0.11,woven
+8,QUARTER,hexcel_im7_twill_205,0,0.2255,woven
+9,QUARTER,hexcel_himax_biax_100,0,0.11,woven
+10,HEAL,hexcel_im7_twill_205,0,0.2255,woven
+11,HEAL,hexcel_himax_biax_100,0,0.11,woven
+12,FULL,hexcel_im7_twill_205,0,0.2255,woven

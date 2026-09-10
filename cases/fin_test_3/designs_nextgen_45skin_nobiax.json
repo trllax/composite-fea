@@ -1,0 +1,30 @@
+{
+  "_comment": "exp/nextgen-fin edge case: FULL +-45 SKINS (twill_3k_198 @ 45 both faces) over a UD spanwise core. The +-45 shell carries torsion, the UD core carries bending, so flex is set almost entirely by the core ply count. NO BIAX -- +-45 from the 3k twill rotated 45 deg. Symmetric TaperDesign. QUARTER pad keeps the heel stiff; MID pad (0 or 1 UD pair) seats the kick.",
+  "_targets": "flex W(90) ~13.5 N (baseline 15.52 - 2), kick MID f~0.46, k_twist > 16249 N.mm/rad at a matched theta_at_probe (baseline 118.3 deg). Expect k_twist well above the floor given full +-45 skins.",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["twill_3k_198", 45]],
+    "core": [["hexcel_uni_231", 0]],
+    "core_center": null,
+    "pads": {
+      "QUARTER": [["hexcel_uni_231", 0]],
+      "TIP": [["twill_3k_198", 45]]
+    },
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
+  },
+  "axes": {
+    "core": [
+      [["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0], ["hexcel_uni_231", 0]]
+    ],
+    "core_center": [
+      null,
+      ["hexcel_uni_231", 0]
+    ],
+    "pads.MID": [
+      [],
+      [["hexcel_uni_231", 0]]
+    ]
+  }
+}

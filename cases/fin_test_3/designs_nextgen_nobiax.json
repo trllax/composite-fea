@@ -1,0 +1,31 @@
+{
+  "_comment": "exp/nextgen-fin Grid A -- NO BIAX. Buildable from current stock only: twill_3k_198 (3k 0/90 woven) + hexcel_uni_231 (UD). Torsional +-45 comes ONLY from the 3k twill rotated 45 deg (a 0/90 woven at 45 deg is a balanced +-45 layer; no bias-cut UD). Symmetric by construction. Ply thickness is the as-laid cured value from shop_inventory.csv (gsm/1000 * 1.2).",
+  "_geometry_note": "FIN_TEST_3.step, long axis +y, clamp at HEAL. Free-span reach from the clamp: QUARTER 0-15%, MID 0-39%, z_3_4ths 0-68%, TIP 84-100%. FULL is the whole blade. HEAL is inside the fixture -- omitted.",
+  "_knobs": "core (on FULL) = flex knob (~thickness^3). pads.MID = kick knob (seats the fold mid-blade). A [twill@45] ply in the core is the twist knob. QUARTER and TIP pads fixed.",
+  "_materials": "hexcel_uni_231 is now an IM UD card (E1=153 GPa, IM446-grade ~43 Msi fibre, constants reused from hexcel_im2_uni_193). twill_3k_198 unchanged (AS4C SM woven, E1=59 GPa).",
+  "_targets": "baseline = plybook_shop_measured re-solve 2026-09-10: flex W(90)=15.52 N, kick MID f=0.46, k_twist=16249 N.mm/rad at theta_at_probe=118.3 deg. TARGET: flex ~13.5 N (baseline-2), kick MID, k_twist>16249 at a matched theta.",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["twill_3k_198", 0]],
+    "core": [["hexcel_uni_231", 0]],
+    "core_center": null,
+    "pads": {
+      "QUARTER": [["hexcel_uni_231", 0]],
+      "TIP": [["twill_3k_198", 0]]
+    },
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
+  },
+  "axes": {
+    "core": [
+      [["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0]],
+      [["twill_3k_198", 45], ["hexcel_uni_231", 0]],
+      [["twill_3k_198", 45], ["hexcel_uni_231", 0], ["hexcel_uni_231", 0]]
+    ],
+    "pads.MID": [
+      [],
+      [["hexcel_uni_231", 0]],
+      [["hexcel_uni_231", 0], ["hexcel_uni_231", 0]]
+    ]
+  }
+}

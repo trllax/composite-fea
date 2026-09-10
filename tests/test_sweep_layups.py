@@ -184,9 +184,10 @@ def test_run_sweep_dispatches_collects_and_writes_parquet(tmp_path, monkeypatch)
     # through_n_plies is the FULL stack only: skin*2 + core*2.
     by_core_n = frame.set_index("core")["through_n_plies"].to_dict()
     assert by_core_n[f"{UD}@0"] == 2 + 2 * 1
-    # through_thickness is the FULL stack only: skin*2 + core*2, from inventory.
+    # through_thickness is the FULL stack only: skin*2 + core*2, from inventory
+    # (as-laid cured thickness = gsm/1000 * CURED_PLY_FACTOR).
     by_core_t = frame.set_index("core")["through_thickness_mm"].to_dict()
-    assert by_core_t[f"{UD}@0"] == pytest.approx(2 * 0.205 + 2 * 0.193)
+    assert by_core_t[f"{UD}@0"] == pytest.approx(2 * 0.2255 + 2 * 0.2123)
 
 
 def test_cache_hit_skips_the_solve(tmp_path, monkeypatch):
@@ -260,4 +261,20 @@ def test_solve_phash_moves_with_kick_bands():
     )
     assert sl.solve_phash(kick_bands=41, **common) == sl.solve_phash(
         kick_bands=41, **common
+    )
+
+
+def test_solve_phash_moves_with_twist_probe():
+    common = dict(
+        materials=Path("materials/from_shop.csv"),
+        size_mm=16.0, uy_frac=0.6, bow_tip_mm=0.5, kick_bands=41,
+    )
+    # a twist-probe run must not collide with a plain run's cache
+    assert sl.solve_phash(**common) != sl.solve_phash(twist_probe=True, **common)
+    # nor two twist runs with different couple forces
+    assert sl.solve_phash(
+        twist_probe=True, twist_cload_n=5.0, **common
+    ) != sl.solve_phash(twist_probe=True, twist_cload_n=10.0, **common)
+    assert sl.solve_phash(twist_probe=True, **common) == sl.solve_phash(
+        twist_probe=True, **common
     )

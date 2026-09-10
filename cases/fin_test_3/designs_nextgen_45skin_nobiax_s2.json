@@ -1,0 +1,29 @@
+{
+  "_comment": "exp/nextgen-fin +-45-SKIN architecture, sweep 2 -- gap-fill the thin end. s1 showed twill_3k_198 @ 45 skins over 1 UD core pair (through 1.03 mm) gives flex 17 N MID with k_twist ~40k (2.4x the 16249 baseline!) at theta_at_probe 118.9 deg -- a near-perfect match to the baseline's 118.3, so the twist beat is real. That design is ~1.5 N stiffer than the -2 N target; s2 thins the UD core to a single mid ply to bring flex down to ~13.5 while the +-45 skins keep the torsion margin. NO BIAX.",
+  "_targets": "flex W(90) ~13.5 N (baseline 15.52 - 2), kick MID f~0.46, k_twist > 16249 N.mm/rad at theta_at_probe ~118 deg (matched).",
+  "base": {
+    "through_zone": "FULL",
+    "skins": [["twill_3k_198", 45]],
+    "core": [],
+    "core_center": null,
+    "pads": {
+      "QUARTER": [["hexcel_uni_231", 0]],
+      "TIP": [["twill_3k_198", 45]]
+    },
+    "pad_order": ["TIP", "z_3_4ths", "MID", "QUARTER"]
+  },
+  "axes": {
+    "core": [
+      [],
+      [["hexcel_uni_231", 0]]
+    ],
+    "core_center": [
+      null,
+      ["hexcel_uni_231", 0]
+    ],
+    "pads.MID": [
+      [["hexcel_uni_231", 0]],
+      [["twill_3k_198", 45], ["hexcel_uni_231", 0]]
+    ]
+  }
+}

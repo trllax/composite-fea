@@ -187,3 +187,64 @@ def axial_drive_body(
         else:
             lines += ["*NODE FILE", "U"]
     return "\n".join(lines)
+
+
+def twist_couple_body(
+    *,
+    le_nset: str,
+    te_nset: str,
+    force: float,
+    dof: int = 2,
+    op_new: bool = False,
+    read_nsets: Sequence[str] = ("fixed_end",),
+    energy_elset: str = "blade",
+) -> str:
+    """Step body: a small force couple that twists the tip about its chord line.
+
+    Appended to a solve that has already driven the blade over to a ~90 degree
+    tip tangent (``axial_drive_body``). ``force`` is applied along ``dof`` (the
+    blade long axis) to every node of ``le_nset`` and ``-force`` to every node of
+    ``te_nset`` -- equal and opposite about the chord midline, i.e. a couple that
+    rotates the tip section about its own tangent (global z at 90 degrees).
+
+    A ``*CLOAD``, not a ``*BOUNDARY``: after the blade has rolled with an
+    unsymmetric layup the tip-edge nodes sit at unknown, non-uniform axial
+    positions, so a prescribed *total* displacement there cannot be formed
+    without first solving. A force is incremental by construction. Run this as a
+    ``+force`` / ``-force`` pair: the second step passes ``op_new=True`` so its
+    ``*CLOAD`` replaces the first's rather than adding to it, and the swing
+    differences out any bend-twist pre-load.
+
+    ``force`` must be small enough that the resulting twist stays linear (a
+    degree or so); the caller reads the achieved angle from the ``U`` prints and
+    ``k_twist = couple / angle``.
+
+    The held axial drive (``clip``) and root clamp (``fixed_end``) from earlier
+    steps carry forward -- ccx keeps a prior ``*BOUNDARY`` unless it is restated.
+
+    Prints ``RF`` TOTALS on ``le_nset`` / ``te_nset`` (near zero if their drive
+    axis is free, as it must be for the ``*CLOAD`` to act -- a large value means
+    the DOF is constrained and the couple did nothing) and on each ``read_nsets``
+    (a load-path check), ``U`` on ``le_nset`` / ``te_nset`` (the achieved twist,
+    and a net-translation contamination check), and ``energy_elset`` ``ELSE``.
+    """
+    if dof not in (1, 2, 3):
+        raise ValueError(f"dof must be 1, 2 or 3, not {dof}")
+    if force == 0.0:
+        raise ValueError("twist_couple_body needs a non-zero force")
+
+    cload = "*CLOAD, OP=NEW" if op_new else "*CLOAD"
+    lines = [
+        cload,
+        f"{le_nset}, {dof}, {force:.10f}",
+        f"{te_nset}, {dof}, {-force:.10f}",
+    ]
+    for nset in (le_nset, te_nset, *read_nsets):
+        lines += [f"*NODE PRINT, NSET={nset}, TOTALS=YES", "RF"]
+    for nset in (le_nset, te_nset):
+        lines += [f"*NODE PRINT, NSET={nset}", "U"]
+    lines += [
+        f"*EL PRINT, ELSET={energy_elset}, TOTALS=ONLY",
+        "ELSE",
+    ]
+    return "\n".join(lines)
