@@ -41,8 +41,11 @@ catches a mirrored `*ORIENTATION` sign convention — see `CLAUDE.md`.
 
 ## Reading it
 
-`compfea-build` writes `laminate_abd.csv` with `a11 … d66` per zone. The useful
-dimensionless warp index is
+`compfea-build` writes `laminate_abd.csv` with `a11 … d66` one row per
+**distinct coverage stack** (`cov_1 … cov_N`, keyed by which plies cover an
+element, not by zone name — the build's `stack` column and its `zone_report`
+table tell you which region each `cov_i` is). The useful dimensionless warp
+index is
 
 ```
 B / sqrt(A11 * D11)

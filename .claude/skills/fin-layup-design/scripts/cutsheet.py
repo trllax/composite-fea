@@ -18,14 +18,20 @@ ZONE_AREA_MM2 = {
     "FULL": 137512.8, "z_3_4ths": 96498.7, "MID": 60705.4,
     "QUARTER": 29984.4, "TIP": 19268.7, "HEAL": 13885.3,
 }
-# gsm and roll width per shipped fabric (materials/shop_inventory.csv). Extend as
-# stock changes; an unknown fabric raises rather than guessing.
+# gsm and roll width per fabric in materials/shop_inventory.csv (incl. the older
+# IM2/IM7 rows the baseline ply book uses). Extend as stock changes; an unknown
+# fabric raises rather than guessing. Roll width None -> yield not estimated.
 GSM = {"twill_3k_198": 198.0, "hexcel_uni_231": 231.0, "hexcel_uni_379": 379.0,
-       "hexcel_himax_biax_100": 100.0}
+       "hexcel_himax_biax_100": 100.0, "hexcel_im7_twill_205": 205.0,
+       "hexcel_im2_uni_193": 193.0}
 ROLL_W_IN = {"twill_3k_198": 33.5, "hexcel_uni_231": 24.0, "hexcel_uni_379": 24.0,
-             "hexcel_himax_biax_100": None}
+             "hexcel_himax_biax_100": None, "hexcel_im7_twill_205": None,
+             "hexcel_im2_uni_193": None}
 IN2MM = 25.4
 NEST = 1.35   # offcut / nesting factor for a ply cut to a tapered planform
+# wet hand layup runs ~40-50% resin by weight, so cured part mass is roughly
+# (dry fabric mass) / 0.55. This is a range, not the x1.2 thickness ratio.
+CURED_MASS_OVER_DRY = 1.8
 
 
 def _rows(path):
@@ -72,7 +78,8 @@ def print_sheet(path):
         roll = f"{d['roll_m']:.2f} @ {d['roll_w_in']}in" if d["roll_m"] else "-"
         print(f"{m:<22} {GSM[m]:>4.0f} {d['plies']:>4} {ang:>8} "
               f"{d['fabric_m2']:>7.3f} {d['nest_m2']:>7.3f} {roll:>13}")
-    print(f"\ndry fabric mass: {mass:.0f} g  ->  ~{mass*1.2:.0f} g cured (x1.2 resin)")
+    print(f"\ndry fabric mass: {mass:.0f} g  ->  ~{mass * CURED_MASS_OVER_DRY:.0f} g "
+          f"cured (wet layup, ~45% resin by wt; not the thickness ratio)")
 
 
 if __name__ == "__main__":

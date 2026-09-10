@@ -7,7 +7,11 @@
 # Sequence (ply 1 = -z showing face), as specified:
 #   twill-FULL, UD-FULL, UD-TIP, biax-FULL, UD-MID, twill-MID, biax-MID,
 #   twill-QUARTER, biax-QUARTER, twill-HEAL, biax-HEAL, twill-FULL
-# Span +y. Thicknesses = inventory discrete. Biax angle_deg=0 => fibres ±45 to span.
+# Span +y. Thicknesses = inventory as-laid cured (gsm/1000 * 1.2).
+# The biax plies are at angle_deg=0 and hexcel_himax_biax_100 is a stand-in card
+# (E1=E2, identical to twill_3k_198), so the model treats them as 0/90 fabric --
+# NOT +-45. This baseline's k_twist therefore includes ~no torsional contribution
+# from the biax; "beat the baseline twist" is measured on that basis.
 # Note: this book is NOT mid-plane symmetric (B may be nonzero) — matches the listed order.
 ply,zone,material,angle_deg,thickness_mm,kind
 1,FULL,hexcel_im7_twill_205,0,0.246,woven

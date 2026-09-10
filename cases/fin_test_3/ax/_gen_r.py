@@ -22,10 +22,12 @@ BOOKS = {
             "AX0 super-soft, single-fabric (twill_3k_198 only). +-45 skins, 0deg twill "
             "spanwise pair, +-45 MID/QUARTER steps. Palindromic stacks -> B~0."),
     # ax3 interleaved: open blade all-UD -> B~0. FULL{tw45,UD,UD,tw45} MID{tw45}
-    # QUARTER{UD,tw45} TIP{tw45}. root palindrome [45/0/45/0/0/45/0/45] target.
-    "ax3r": ([("FULL", *T45), ("QUARTER", *U0), ("MID", *T45), ("FULL", *U0),
+    # QUARTER{UD,tw45} TIP{tw45}. Root (QUARTER+MID+FULL) is the 7-ply palindrome
+    # [45/0/45/0/45/0/45]; MID-only element is [45/0/45/0/45]. Both sym -> B = 0.
+    "ax3r": ([("FULL", *T45), ("FULL", *U0), ("MID", *T45), ("QUARTER", *U0),
               ("QUARTER", *T45), ("FULL", *U0), ("TIP", *T45), ("FULL", *T45)],
-             "AX3R = ax3, +-45 interleaved. Open blade is all-UD at 0deg so B~0 is reachable."),
+             "AX3R = ax3 (all-UD at 0deg), +-45 interleaved so the root stack is the "
+             "palindrome [45/0/45/0/45/0/45] -> B = 0 in every load-bearing region."),
     # ax5 interleaved -- keeps the softening tw0 ply, so expect a small residual B
     # in the open blade (tw0 vs UD material mismatch). Included for the record.
     "ax5r": ([("FULL", *T45), ("QUARTER", *U0), ("MID", *T45), ("FULL", *T0),

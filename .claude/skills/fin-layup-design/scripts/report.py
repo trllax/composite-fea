@@ -47,8 +47,12 @@ def load(run: pathlib.Path):
     )
 
 
+def _f(v, fmt):
+    """Format a possibly-None number (flex_n is null when the drive misses 90°)."""
+    return format(v, fmt) if isinstance(v, (int, float)) else "—"
+
+
 def stack_svg(plybook: pathlib.Path) -> str:
-    plies, _, _ = cut_rows(plybook)
     rows = list(csv_plies(plybook))
     w, x, gap = 460, 8, 2
     bar_h = 15
@@ -81,15 +85,16 @@ def cutsheet_html(plybook: pathlib.Path) -> str:
     plies, per_mat, mass = cut_rows(plybook)
     r = ['<table class="cut"><thead><tr><th>fabric</th><th>gsm</th><th>plies</th>'
          '<th>orient</th><th>m²</th><th>+35% nest</th><th>roll</th></tr></thead><tbody>']
+    from cutsheet import GSM, CURED_MASS_OVER_DRY
     for m, d in per_mat.items():
-        from cutsheet import GSM
         ang = "/".join(f"{a}°" for a in sorted(d["angles"]))
         roll = (f"{d['roll_m']:.2f} m @ {d['roll_w_in']}\"" if d["roll_m"] else "—")
         r.append(f"<tr><td>{m}</td><td>{GSM[m]:.0f}</td><td>{d['plies']}</td>"
                  f"<td>{ang}</td><td>{d['fabric_m2']:.3f}</td>"
                  f"<td>{d['nest_m2']:.3f}</td><td>{roll}</td></tr>")
     r.append(f"</tbody></table><p class='mass'>dry fabric ~{mass:.0f} g → "
-             f"~{mass*1.2:.0f} g cured</p>")
+             f"~{mass * CURED_MASS_OVER_DRY:.0f} g cured "
+             f"(wet layup ~45% resin; not the thickness ratio)</p>")
     return "".join(r)
 
 
@@ -120,9 +125,10 @@ def main():
         nm = c["name"].split("_uf")[0]
         trs.append(
             f"<tr class='{cls}'><td>{html.escape(nm)}</td>"
-            f"<td>{c['flex']:.2f}</td><td>{c['bucket']}</td><td>{c['frac']:.2f}</td>"
-            f"<td>{c['migr']:.1f}</td><td>{(c['ktwist'] or 0):.0f}</td>"
-            f"<td>{(c['theta'] or 0):.0f}°</td>"
+            f"<td>{_f(c['flex'], '.2f')}</td><td>{c['bucket'] or '—'}</td>"
+            f"<td>{_f(c['frac'], '.2f')}</td>"
+            f"<td>{_f(c['migr'], '.1f')}</td><td>{_f(c['ktwist'], '.0f')}</td>"
+            f"<td>{_f(c['theta'], '.0f')}°</td>"
             f"<td>{'1.00×' if c is base else ratio(c)}</td>"
             f"<td>{c['warn'] or c['twwarn'] or ''}</td></tr>")
 
@@ -140,9 +146,9 @@ def main():
         cut = cutsheet_html(pb) if pb.exists() else ""
         blocks.append(f"""
         <section><h2>{html.escape(nm)}</h2>
-        <p class='hd'>flex {c['flex']:.1f} N · kick {c['bucket']} f={c['frac']:.2f}
-        · migration {c['migr']:.1f} mm · k_twist {(c['ktwist'] or 0):.0f}
-        @ θ {(c['theta'] or 0):.0f}° · {ratio(c) if kbase else ''}</p>
+        <p class='hd'>flex {_f(c['flex'], '.1f')} N · kick {c['bucket'] or '—'} f={_f(c['frac'], '.2f')}
+        · migration {_f(c['migr'], '.1f')} mm · k_twist {_f(c['ktwist'], '.0f')}
+        @ θ {_f(c['theta'], '.0f')}° · {ratio(c) if kbase else ''}</p>
         <div class='two'><div>{stack}</div><div>{shape}</div></div>
         {cut}</section>""")
 

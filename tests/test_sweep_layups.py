@@ -184,9 +184,10 @@ def test_run_sweep_dispatches_collects_and_writes_parquet(tmp_path, monkeypatch)
     # through_n_plies is the FULL stack only: skin*2 + core*2.
     by_core_n = frame.set_index("core")["through_n_plies"].to_dict()
     assert by_core_n[f"{UD}@0"] == 2 + 2 * 1
-    # through_thickness is the FULL stack only: skin*2 + core*2, from inventory.
+    # through_thickness is the FULL stack only: skin*2 + core*2, from inventory
+    # (as-laid cured thickness = gsm/1000 * CURED_PLY_FACTOR).
     by_core_t = frame.set_index("core")["through_thickness_mm"].to_dict()
-    assert by_core_t[f"{UD}@0"] == pytest.approx(2 * 0.205 + 2 * 0.193)
+    assert by_core_t[f"{UD}@0"] == pytest.approx(2 * 0.246 + 2 * 0.2316)
 
 
 def test_cache_hit_skips_the_solve(tmp_path, monkeypatch):
