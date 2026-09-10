@@ -1,10 +1,10 @@
 # AX0 super-soft, single-fabric (twill_3k_198 only). +-45 skins, 0deg twill spanwise pair, +-45 MID/QUARTER steps. Palindromic stacks -> B~0.
 ply,zone,material,angle_deg,thickness_mm,kind
-1,FULL,twill_3k_198,45.000000,0.2376,woven
-2,QUARTER,twill_3k_198,0.000000,0.2376,woven
-3,FULL,twill_3k_198,0.000000,0.2376,woven
-4,MID,twill_3k_198,45.000000,0.2376,woven
-5,FULL,twill_3k_198,0.000000,0.2376,woven
-6,QUARTER,twill_3k_198,0.000000,0.2376,woven
-7,TIP,twill_3k_198,45.000000,0.2376,woven
-8,FULL,twill_3k_198,45.000000,0.2376,woven
+1,FULL,twill_3k_198,45.000000,0.2178,woven
+2,QUARTER,twill_3k_198,0.000000,0.2178,woven
+3,FULL,twill_3k_198,0.000000,0.2178,woven
+4,MID,twill_3k_198,45.000000,0.2178,woven
+5,FULL,twill_3k_198,0.000000,0.2178,woven
+6,QUARTER,twill_3k_198,0.000000,0.2178,woven
+7,TIP,twill_3k_198,45.000000,0.2178,woven
+8,FULL,twill_3k_198,45.000000,0.2178,woven

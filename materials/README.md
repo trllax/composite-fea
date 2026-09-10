@@ -44,12 +44,13 @@ not columns here.
   `gsm = oz_yd2 * 33.9057`.
 - **Thickness**: the as-laid **cured** ply thickness. When `thickness_mm` is
   blank the loader derives `areal_weight_gsm / 1000 * CURED_PLY_FACTOR`
-  (`shop_inventory.CURED_PLY_FACTOR`, currently **1.2** — the built FIN_TEST_3
-  prototype measured ~20 % over the dry `gsm/1000` rule on 2026-09-10: resin
-  pickup + hand-layup consolidation). An explicit `thickness_mm` is trusted
-  as-is (no factor); the shipped rows already carry the ×1.2 cured value.
-  Prefer a per-fabric micrometer measurement over the uniform factor when you
-  have one.
+  (`shop_inventory.CURED_PLY_FACTOR`, currently **1.1** — the built FIN_TEST_3
+  prototype measured ~1.2× the dry `gsm/1000` rule on 2026-09-10; 1.1 is the
+  adopted compromise, part real ply loft and part resin). The card moduli and
+  density are NOT scaled with it, so since flex ~ `E·t³` this factor moves
+  stiffness directly — keep it small. An explicit `thickness_mm` is trusted
+  as-is (no factor); the shipped rows carry the ×1.1 cured value. Prefer a
+  per-fabric micrometer + Vf re-derivation over the uniform factor.
 
 ### Architecture → ply angle
 

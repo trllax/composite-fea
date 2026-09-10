@@ -1,11 +1,10 @@
-# AX3R = ax3 (all-UD at 0deg), +-45 interleaved so the root stack is the
-#        palindrome [45/0/45/0/45/0/45] -> B = 0 in every load-bearing region.
+# AX3R = ax3 (all-UD at 0deg), +-45 interleaved so the root stack is the palindrome [45/0/45/0/45/0/45] -> B = 0 in every load-bearing region.
 ply,zone,material,angle_deg,thickness_mm,kind
-1,FULL,twill_3k_198,45.000000,0.2376,woven
-2,FULL,hexcel_uni_231,0.000000,0.2772,ud
-3,MID,twill_3k_198,45.000000,0.2376,woven
-4,QUARTER,hexcel_uni_231,0.000000,0.2772,ud
-5,QUARTER,twill_3k_198,45.000000,0.2376,woven
-6,FULL,hexcel_uni_231,0.000000,0.2772,ud
-7,TIP,twill_3k_198,45.000000,0.2376,woven
-8,FULL,twill_3k_198,45.000000,0.2376,woven
+1,FULL,twill_3k_198,45.000000,0.2178,woven
+2,FULL,hexcel_uni_231,0.000000,0.2541,ud
+3,MID,twill_3k_198,45.000000,0.2178,woven
+4,QUARTER,hexcel_uni_231,0.000000,0.2541,ud
+5,QUARTER,twill_3k_198,45.000000,0.2178,woven
+6,FULL,hexcel_uni_231,0.000000,0.2541,ud
+7,TIP,twill_3k_198,45.000000,0.2178,woven
+8,FULL,twill_3k_198,45.000000,0.2178,woven

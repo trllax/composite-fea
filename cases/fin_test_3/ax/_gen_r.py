@@ -8,7 +8,7 @@ families are (a) all-UD at 0deg (ax3 lineage) or (b) all-twill (ax0).
 """
 import csv, pathlib
 
-TH = {"twill_3k_198": 0.2376, "hexcel_uni_231": 0.2772}
+TH = {"twill_3k_198": 0.2178, "hexcel_uni_231": 0.2541}
 K = {"twill_3k_198": "woven", "hexcel_uni_231": "ud"}
 OUT = pathlib.Path(__file__).parent
 T45 = ("twill_3k_198", 45.0); T0 = ("twill_3k_198", 0.0); U0 = ("hexcel_uni_231", 0.0)

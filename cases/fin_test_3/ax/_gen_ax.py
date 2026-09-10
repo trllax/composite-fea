@@ -8,7 +8,7 @@ Cured thicknesses come from materials/shop_inventory.csv:
 """
 import csv, pathlib
 
-TH = {"twill_3k_198": 0.2376, "hexcel_uni_231": 0.2772, "hexcel_himax_biax_100": 0.12}
+TH = {"twill_3k_198": 0.2178, "hexcel_uni_231": 0.2541, "hexcel_himax_biax_100": 0.11}
 KIND = {"twill_3k_198": "woven", "hexcel_uni_231": "ud", "hexcel_himax_biax_100": "woven"}
 
 OUT = pathlib.Path(r"C:\Users\trl242\projects\composite-fea\cases\fin_test_3\ax")

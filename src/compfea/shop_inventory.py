@@ -39,12 +39,14 @@ ARCHITECTURES = tuple(ARCH_TO_KIND)
 OZ_YD2_TO_GSM = 33.9057
 GSM_TO_THICKNESS_MM = 1.0 / 1000.0  # 100 gsm -> 0.1 mm (dry areal -> geometric)
 # Cured/consolidated ply thickness runs above the dry gsm/1000 rule of thumb:
-# resin pickup, binder, and hand-layup consolidation. Measured 2026-09-10 on the
-# built FIN_TEST_3 prototype laminate at ~1.2x gsm/1000, applied uniformly to
-# every fabric pending per-fabric micrometer data. Multiplies only the *derived*
-# thickness; an explicit thickness_mm in the CSV is already the as-laid value and
-# is trusted as-is.
-CURED_PLY_FACTOR = 1.2
+# resin pickup, binder, and hand-layup consolidation. The built FIN_TEST_3
+# prototype laminate measured ~1.2x gsm/1000 (2026-09-10); 1.1 is the adopted
+# compromise -- part real ply loft, part resin -- applied uniformly pending a
+# per-fabric measurement AND a matching Vf/modulus re-derivation. The card
+# moduli and density are NOT scaled with it, so a large factor here quietly
+# inflates bending stiffness (D ~ E*t^3). Multiplies only the *derived*
+# thickness; an explicit thickness_mm in the CSV is trusted as-is.
+CURED_PLY_FACTOR = 1.1
 
 _ELASTIC = ("e1", "e2", "e3", "nu12", "nu13", "nu23", "g12", "g13", "g23")
 REQUIRED_COLUMNS = (
