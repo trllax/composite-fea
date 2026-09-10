@@ -34,20 +34,25 @@ def test_shipped_shop_matches_im_cards_and_keeps_fibre_out_of_e1():
     assert not skus["hexcel_im2_uni_193"].used_default_lamina
     assert not skus["hexcel_im7_twill_205"].used_default_lamina
     assert not skus["hexcel_himax_biax_100"].used_default_lamina
+    # thickness_mm is the as-laid cured value = gsm/1000 * CURED_PLY_FACTOR (1.2).
     im2 = skus["hexcel_im2_uni_193"]
-    assert im2.architecture == "ud" and im2.thickness_mm == pytest.approx(0.193)
+    assert im2.architecture == "ud" and im2.thickness_mm == pytest.approx(0.2316)
     assert im2.record.constants.e1 == pytest.approx(153000.0)
     biax = skus["hexcel_himax_biax_100"]
     assert biax.architecture == "biax" and biax.record.kind == "woven"
-    assert biax.thickness_mm == pytest.approx(0.1)
+    assert biax.thickness_mm == pytest.approx(0.12)
     assert biax.record.constants.e1 == pytest.approx(59160.0)
     im7 = skus["hexcel_im7_twill_205"]
-    assert im7.architecture == "0_90" and im7.thickness_mm == pytest.approx(0.205)
+    assert im7.architecture == "0_90" and im7.thickness_mm == pytest.approx(0.246)
     assert im7.record.constants.e1 == pytest.approx(86000.0)
+    # hexcel_uni_379 / _231 are an IM fibre roll (~43 Msi) -> the vetted IM
+    # lamina constants (reused from hexcel_im2_uni_193), not the SM default card.
     ud = skus["hexcel_uni_379"]
     assert ud.record.kind == "ud"
-    assert ud.thickness_mm == pytest.approx(0.379)
-    assert ud.record.constants.e1 == pytest.approx(ANSYS_EPOXY_CARBON_UD_230.e1)
+    assert ud.thickness_mm == pytest.approx(0.4548)
+    assert not ud.used_default_lamina
+    assert ud.record.constants.e1 == pytest.approx(153000.0)
+    assert ud.record.constants.e1 != pytest.approx(ANSYS_EPOXY_CARBON_UD_230.e1)
     twill = skus["twill_3k_198"]
     assert twill.record.kind == "woven"
     assert twill.fibre_e_msi == pytest.approx(33.5)
@@ -75,7 +80,8 @@ def test_oz_only_converts_to_gsm(tmp_path):
     )
     sku = load_shop_inventory(path)["u"]
     assert sku.areal_weight_gsm == pytest.approx(11 * 33.9057)
-    assert sku.thickness_mm == pytest.approx(sku.areal_weight_gsm / 1000)
+    # no explicit thickness -> derived gsm/1000 * CURED_PLY_FACTOR
+    assert sku.thickness_mm == pytest.approx(sku.areal_weight_gsm / 1000 * 1.2)
 
 
 def test_partial_elastic_row_is_refused(tmp_path):
@@ -102,7 +108,7 @@ def test_write_materials_csv_round_trip(tmp_path):
 
     lib = load_materials(out)
     assert set(lib) == set(materials_library(skus))
-    assert lib["hexcel_uni_379"].constants.e1 == pytest.approx(ANSYS_EPOXY_CARBON_UD_230.e1)
+    assert lib["hexcel_uni_379"].constants.e1 == pytest.approx(153000.0)
 
 
 def test_default_lamina_names():

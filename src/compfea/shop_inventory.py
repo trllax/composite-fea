@@ -37,7 +37,14 @@ from compfea.materials import (
 ARCH_TO_KIND = {"ud": "ud", "0_90": "woven", "biax": "woven"}
 ARCHITECTURES = tuple(ARCH_TO_KIND)
 OZ_YD2_TO_GSM = 33.9057
-GSM_TO_THICKNESS_MM = 1.0 / 1000.0  # 100 gsm -> 0.1 mm
+GSM_TO_THICKNESS_MM = 1.0 / 1000.0  # 100 gsm -> 0.1 mm (dry areal -> geometric)
+# Cured/consolidated ply thickness runs above the dry gsm/1000 rule of thumb:
+# resin pickup, binder, and hand-layup consolidation. Measured 2026-09-10 on the
+# built FIN_TEST_3 prototype laminate at ~1.2x gsm/1000, applied uniformly to
+# every fabric pending per-fabric micrometer data. Multiplies only the *derived*
+# thickness; an explicit thickness_mm in the CSV is already the as-laid value and
+# is trusted as-is.
+CURED_PLY_FACTOR = 1.2
 
 _ELASTIC = ("e1", "e2", "e3", "nu12", "nu13", "nu23", "g12", "g13", "g23")
 REQUIRED_COLUMNS = (
@@ -157,9 +164,9 @@ def resolve_areal_weight_gsm(row: dict[str, str], where: str) -> float:
 
 
 def resolve_thickness_mm(row: dict[str, str], gsm: float, where: str) -> float:
-    """Explicit thickness, else gsm/1000."""
+    """Explicit thickness, else gsm/1000 * CURED_PLY_FACTOR."""
     t = _optional_float(row, "thickness_mm", where)
-    derived = gsm * GSM_TO_THICKNESS_MM
+    derived = gsm * GSM_TO_THICKNESS_MM * CURED_PLY_FACTOR
     if t is None:
         return derived
     if t <= 0:
@@ -255,11 +262,12 @@ def load_shop_inventory(
         kind = ARCH_TO_KIND[architecture]
         gsm = resolve_areal_weight_gsm(row, where)
         thickness_mm = resolve_thickness_mm(row, gsm, where)
-        derived_t = gsm * GSM_TO_THICKNESS_MM
+        derived_t = gsm * GSM_TO_THICKNESS_MM * CURED_PLY_FACTOR
         if abs(thickness_mm - derived_t) / derived_t > 0.25:
             warnings.append(
                 f"{where}: thickness_mm={thickness_mm:g} differs >25% from "
-                f"gsm/1000={derived_t:g}; using the explicit thickness"
+                f"gsm/1000*{CURED_PLY_FACTOR:g}={derived_t:g}; using the "
+                "explicit thickness"
             )
 
         used_default = _elastic_all_blank(row)

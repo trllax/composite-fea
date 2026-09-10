@@ -72,8 +72,10 @@ the same knobs as below, made explicit:
   `pad_order` is `-z` → mid-plane order, i.e. through-thickness position.
 
 Everything is **symmetric by construction** (`B ≈ 0`, no warp off the mould) and
-every ply thickness is the stocked value -- you pick material and angle, not
-thickness. What this cannot express is an odd ply count in a pad zone or an
+every ply thickness is the stocked **as-laid cured** value from
+`materials/shop_inventory.csv` (`gsm/1000 * shop_inventory.CURED_PLY_FACTOR`,
+1.2 — measured on the built prototype 2026-09-10) -- you pick material and angle,
+not thickness. What this cannot express is an odd ply count in a pad zone or an
 arbitrary unsymmetric order; hand-write a ply book for those.
 
 ```sh
