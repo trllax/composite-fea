@@ -19,7 +19,8 @@ from cutsheet import cut_rows  # noqa: E402
 
 MAT_COLOR = {  # material@angle -> fill
     ("twill_3k_198", 45): "#0f6f6c", ("twill_3k_198", 0): "#8fb6b4",
-    ("hexcel_uni_231", 0): "#2b3033", ("hexcel_himax_biax_100", 45): "#5fa8c9",
+    ("hexcel_uni_231", 0): "#2b3033", ("hexcel_uni_379", 0): "#8a5a2b",
+    ("hexcel_himax_biax_100", 45): "#5fa8c9",
     ("hexcel_himax_biax_100", 0): "#a9cede",
 }
 
@@ -54,13 +55,13 @@ def _f(v, fmt):
 
 def stack_svg(plybook: pathlib.Path) -> str:
     rows = list(csv_plies(plybook))
-    w, x, gap = 460, 8, 2
+    w, x, gap = 640, 8, 2
     bar_h = 15
     out = [f'<svg viewBox="0 0 {w} {len(rows)*(bar_h+gap)+4}" '
-           f'width="100%" style="max-width:520px">']
+           f'width="100%" style="max-width:680px">']
     for i, (zone, mat, ang, th) in enumerate(rows):
         y = 2 + i * (bar_h + gap)
-        bw = (th / 0.30) * 300
+        bw = (th / 0.45) * 270  # 0.45 mm full-scale: the heaviest single ply in stock (uni_379) fits with its label
         col = MAT_COLOR.get((mat, ang), "#999")
         out.append(f'<rect x="{x}" y="{y}" width="{bw:.0f}" height="{bar_h}" '
                    f'rx="2" fill="{col}"/>')

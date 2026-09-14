@@ -1,0 +1,18 @@
+# AX2R_379 = ax2r with the mirrored UD core PAIR (ax2r plies 5 & 6, 2 x
+#            hexcel_uni_231 @ 0deg, 0.2541 mm each) collapsed to a SINGLE ply of
+#            the ~2x-heavier roll hexcel_uni_379 @ 0deg (0.4169 mm). Same IM2
+#            lamina card as _231 (E1 153 GPa), so this is a pure thickness +
+#            ply-count change: 0.5082 mm of 0deg core -> 0.4169 mm (-18%), one
+#            fewer FULL ply across the whole blade. Open blade [45/0(379)/45] is
+#            still an angle+material palindrome -> B ~ 0; the MID band is also
+#            exactly B = 0 (both 0deg plies share the IM2 card), only the
+#            QUARTER-cap-MID root picks up the small residual ax2r1 already
+#            carries. Structure mirrors ax2r1.csv.
+ply,zone,material,angle_deg,thickness_mm,kind
+1,FULL,twill_3k_198,45.000000,0.2178,woven
+2,QUARTER,hexcel_uni_231,0.000000,0.2541,ud
+3,MID,hexcel_uni_231,0.000000,0.2541,ud
+4,QUARTER,twill_3k_198,45.000000,0.2178,woven
+5,FULL,hexcel_uni_379,0.000000,0.4169,ud
+6,TIP,twill_3k_198,45.000000,0.2178,woven
+7,FULL,twill_3k_198,45.000000,0.2178,woven
